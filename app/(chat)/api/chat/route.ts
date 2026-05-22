@@ -39,7 +39,11 @@ import {
 } from "@/lib/db/queries";
 import type { DBMessage } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
+import { groqChatCompletionStream, isGroqCloneEnabled } from "@/lib/clone/groq";
+import { isN8nModeEnabled, sendTextToN8n } from "@/lib/n8n/client";
 import { checkIpRateLimit } from "@/lib/ratelimit";
+import { saveConversationToSupabase } from "@/lib/supabase/conversations";
+import { buildSystemPrompt, getCloneSettings } from "@/lib/supabase/poc-config";
 import type { ChatMessage } from "@/lib/types";
 import { convertToUIMessages, generateUUID } from "@/lib/utils";
 import { generateTitleFromUserMessage } from "../../actions";
@@ -57,6 +61,125 @@ function getStreamContext() {
 
 export { getStreamContext };
 
+function splitForStreaming(text: string, chunkSize = 14) {
+  const chunks: string[] = [];
+  for (let index = 0; index < text.length; index += chunkSize) {
+    chunks.push(text.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+function extractDeltaFromSseData(data: string) {
+  const trimmed = data.trim();
+  if (!trimmed || trimmed === "[DONE]") {
+    return "";
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+
+    const directText = parsed.text;
+    if (typeof directText === "string") {
+      return directText;
+    }
+
+    const directResponse = parsed.response;
+    if (typeof directResponse === "string") {
+      return directResponse;
+    }
+
+    const choices = parsed.choices;
+    if (Array.isArray(choices) && choices.length > 0) {
+      const first = choices[0] as Record<string, unknown>;
+      const delta = first.delta as Record<string, unknown> | undefined;
+      if (delta && typeof delta.content === "string") {
+        return delta.content;
+      }
+      if (typeof first.text === "string") {
+        return first.text;
+      }
+      const message = first.message as Record<string, unknown> | undefined;
+      if (message && typeof message.content === "string") {
+        return message.content;
+      }
+    }
+  } catch {
+    return trimmed;
+  }
+
+  return "";
+}
+
+async function streamN8nTextToUi({
+  response,
+  writeDelta,
+  messageId,
+}: {
+  response: Response;
+  writeDelta: (part: { type: "text-delta"; id: string; delta: string }) => void;
+  messageId: string;
+}) {
+  const body = response.body;
+  if (!body) {
+    return "";
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  const isSse = contentType.includes("text/event-stream");
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let fullText = "";
+
+  if (!isSse) {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      const chunk = decoder.decode(value, { stream: true });
+      if (!chunk) {
+        continue;
+      }
+      fullText += chunk;
+      writeDelta({ type: "text-delta", id: messageId, delta: chunk });
+    }
+
+    return fullText.trim();
+  }
+
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() ?? "";
+
+    for (const event of events) {
+      const lines = event.split("\n");
+      for (const line of lines) {
+        if (!line.startsWith("data:")) {
+          continue;
+        }
+
+        const payload = line.slice(5);
+        const delta = extractDeltaFromSseData(payload);
+        if (!delta) {
+          continue;
+        }
+
+        fullText += delta;
+        writeDelta({ type: "text-delta", id: messageId, delta });
+      }
+    }
+  }
+
+  return fullText.trim();
+}
+
 export async function POST(request: Request) {
   let requestBody: PostRequestBody;
 
@@ -68,23 +191,182 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { id, message, messages, selectedChatModel, selectedVisibilityType } =
-      requestBody;
+    const {
+      id,
+      message,
+      messages,
+      conversationMessages,
+      selectedChatModel,
+      selectedVisibilityType,
+    } = requestBody;
 
     const [, session] = await Promise.all([
       checkBotId().catch(() => null),
       auth(),
     ]);
 
-    if (!session?.user) {
-      return new ChatbotError("unauthorized:chat").toResponse();
-    }
-
     const chatModel = allowedModelIds.has(selectedChatModel)
       ? selectedChatModel
       : DEFAULT_CHAT_MODEL;
 
     await checkIpRateLimit(ipAddress(request));
+
+    const isAnonymousMode =
+      !session?.user && (isGroqCloneEnabled() || isN8nModeEnabled());
+
+    if (!session?.user && !isAnonymousMode) {
+      return new ChatbotError("unauthorized:chat").toResponse();
+    }
+
+    const displayName =
+      session?.user?.email ??
+      session?.user?.name ??
+      session?.user?.id ??
+      "Utilisateur";
+
+    if (isAnonymousMode && message?.role === "user") {
+      const text = message.parts
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join(" ")
+        .trim();
+
+      if (!text) {
+        return new ChatbotError("bad_request:api").toResponse();
+      }
+
+      if (isGroqCloneEnabled()) {
+        const cloneSettings = await getCloneSettings();
+        const systemContent = await buildSystemPrompt({ mode: "text" });
+        const history = (conversationMessages ?? []).flatMap(
+          (currentMessage) => {
+            const textContent = currentMessage.parts
+              .filter((part) => "type" in part && part.type === "text")
+              .map((part) => String((part as { text?: string }).text ?? ""))
+              .join(" ")
+              .trim();
+
+            if (!textContent) {
+              return [];
+            }
+
+            return [
+              {
+                role: currentMessage.role,
+                content: textContent,
+              },
+            ];
+          }
+        );
+
+        const groqResponse = await groqChatCompletionStream(
+          [{ role: "system", content: systemContent }, ...history],
+          cloneSettings.groqChatModel
+        );
+
+        const assistantMessageId = generateUUID();
+        let assistantText = "";
+
+        const stream = createUIMessageStream({
+          execute: async ({ writer }) => {
+            writer.write({ type: "text-start", id: assistantMessageId });
+            assistantText = await streamN8nTextToUi({
+              response: groqResponse,
+              writeDelta: (part) => writer.write(part),
+              messageId: assistantMessageId,
+            });
+            writer.write({ type: "text-end", id: assistantMessageId });
+          },
+          generateId: generateUUID,
+          onFinish: async () => {
+            if (!assistantText) {
+              return;
+            }
+
+            try {
+              await saveConversationToSupabase({
+                sessionId: id,
+                userName: displayName,
+                userMessage: text,
+                botResponse: assistantText,
+                channel: "web",
+              });
+            } catch (error) {
+              console.error("Failed to save anonymous conversation", error);
+            }
+          },
+          onError: () => "Oops, an error occurred!",
+        });
+
+        return createUIMessageStreamResponse({ stream });
+      }
+
+      const n8nResponse = await sendTextToN8n({
+        session_id: id,
+        message: text,
+        channel: "web",
+        user_name: displayName,
+      });
+
+      const assistantMessageId = generateUUID();
+      let assistantText = "";
+      const stream = createUIMessageStream({
+        execute: async ({ writer }) => {
+          writer.write({ type: "text-start", id: assistantMessageId });
+
+          if (
+            (n8nResponse.headers.get("content-type") ?? "").includes(
+              "application/json"
+            )
+          ) {
+            const payload = (await n8nResponse.json()) as { response?: string };
+            assistantText = payload.response?.trim() ?? "";
+
+            for (const chunk of splitForStreaming(assistantText)) {
+              writer.write({
+                type: "text-delta",
+                id: assistantMessageId,
+                delta: chunk,
+              });
+              await new Promise((resolve) => setTimeout(resolve, 20));
+            }
+          } else {
+            assistantText = await streamN8nTextToUi({
+              response: n8nResponse,
+              writeDelta: (part) => writer.write(part),
+              messageId: assistantMessageId,
+            });
+          }
+
+          writer.write({ type: "text-end", id: assistantMessageId });
+        },
+        generateId: generateUUID,
+        onFinish: async () => {
+          if (!assistantText) {
+            return;
+          }
+
+          try {
+            await saveConversationToSupabase({
+              sessionId: id,
+              userName: displayName,
+              userMessage: text,
+              botResponse: assistantText,
+              channel: "web",
+            });
+          } catch (error) {
+            console.error("Failed to save anonymous conversation", error);
+          }
+        },
+        onError: () => "Oops, an error occurred!",
+      });
+
+      return createUIMessageStreamResponse({ stream });
+    }
+
+    if (!session?.user) {
+      return new ChatbotError("unauthorized:chat").toResponse();
+    }
 
     const userType: UserType = session.user.type;
 
@@ -178,6 +460,147 @@ export async function POST(request: Request) {
           },
         ],
       });
+    }
+
+    if (isGroqCloneEnabled() && message?.role === "user") {
+      const cloneSettings = await getCloneSettings();
+      const systemContent = await buildSystemPrompt({ mode: "text" });
+      const text = message.parts
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join(" ")
+        .trim();
+
+      if (!text) {
+        return new ChatbotError("bad_request:api").toResponse();
+      }
+
+      const groqResponse = await groqChatCompletionStream(
+        [
+          {
+            role: "system",
+            content: systemContent,
+          },
+          {
+            role: "user",
+            content: text,
+          },
+        ],
+        cloneSettings.groqChatModel
+      );
+
+      const assistantMessageId = generateUUID();
+      let assistantText = "";
+
+      const stream = createUIMessageStream({
+        execute: async ({ writer }) => {
+          writer.write({ type: "text-start", id: assistantMessageId });
+          assistantText = await streamN8nTextToUi({
+            response: groqResponse,
+            writeDelta: (part) => writer.write(part),
+            messageId: assistantMessageId,
+          });
+          writer.write({ type: "text-end", id: assistantMessageId });
+        },
+        generateId: generateUUID,
+        onFinish: async () => {
+          if (!assistantText) {
+            return;
+          }
+
+          await saveMessages({
+            messages: [
+              {
+                id: assistantMessageId,
+                role: "assistant",
+                parts: [{ type: "text", text: assistantText }],
+                createdAt: new Date(),
+                attachments: [],
+                chatId: id,
+              },
+            ],
+          });
+        },
+        onError: () => "Oops, an error occurred!",
+      });
+
+      return createUIMessageStreamResponse({ stream });
+    }
+
+    if (isN8nModeEnabled() && message?.role === "user") {
+      const text = message.parts
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join(" ")
+        .trim();
+
+      if (!text) {
+        return new ChatbotError("bad_request:api").toResponse();
+      }
+
+      const n8nResponse = await sendTextToN8n({
+        session_id: id,
+        message: text,
+        channel: "web",
+        user_name:
+          session.user.email ?? session.user.name ?? session.user.id ?? "User",
+      });
+
+      const assistantMessageId = generateUUID();
+      let assistantText = "";
+      const stream = createUIMessageStream({
+        execute: async ({ writer }) => {
+          writer.write({ type: "text-start", id: assistantMessageId });
+
+          if (
+            (n8nResponse.headers.get("content-type") ?? "").includes(
+              "application/json"
+            )
+          ) {
+            const payload = (await n8nResponse.json()) as { response?: string };
+            assistantText = payload.response?.trim() ?? "";
+
+            for (const chunk of splitForStreaming(assistantText)) {
+              writer.write({
+                type: "text-delta",
+                id: assistantMessageId,
+                delta: chunk,
+              });
+              await new Promise((resolve) => setTimeout(resolve, 20));
+            }
+          } else {
+            assistantText = await streamN8nTextToUi({
+              response: n8nResponse,
+              writeDelta: (part) => writer.write(part),
+              messageId: assistantMessageId,
+            });
+          }
+
+          writer.write({ type: "text-end", id: assistantMessageId });
+        },
+        generateId: generateUUID,
+        onFinish: async () => {
+          if (!assistantText) {
+            return;
+          }
+
+          await saveMessages({
+            messages: [
+              {
+                id: assistantMessageId,
+                role: "assistant",
+                parts: [{ type: "text", text: assistantText }],
+                createdAt: new Date(),
+                attachments: [],
+                chatId: id,
+              },
+            ],
+          });
+        },
+        onError: () => "Oops, an error occurred!",
+      });
+
+      return createUIMessageStreamResponse({ stream });
     }
 
     const modelConfig = chatModels.find((m) => m.id === chatModel);

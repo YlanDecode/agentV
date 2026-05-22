@@ -10,6 +10,7 @@ import {
   gte,
   inArray,
   lt,
+  sql,
   type SQL,
 } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -26,6 +27,7 @@ import {
   message,
   type Suggestion,
   stream,
+  personaConfig,
   suggestion,
   type User,
   user,
@@ -609,6 +611,124 @@ export async function createStreamId({
     throw new ChatbotError(
       "bad_request:database",
       "Failed to create stream id"
+    );
+  }
+}
+
+export type CloneSettings = {
+  cloneSystemPrompt: string;
+  cloneVoiceSystemPrompt: string;
+  groqChatModel: string;
+  groqTranscriptionModel: string;
+  elevenLabsVoiceId: string;
+  elevenLabsModelId: string;
+};
+
+const defaultCloneSettings: CloneSettings = {
+  cloneSystemPrompt:
+    process.env.CLONE_SYSTEM_PROMPT ??
+    "Tu es un assistant francophone naturel, clair et utile.",
+  cloneVoiceSystemPrompt:
+    process.env.CLONE_VOICE_SYSTEM_PROMPT ??
+    "Tu reponds pour une synthese vocale. Fais des phrases naturelles, concises, sans liste.",
+  groqChatModel: process.env.GROQ_CHAT_MODEL ?? "llama-3.3-70b-versatile",
+  groqTranscriptionModel:
+    process.env.GROQ_TRANSCRIPTION_MODEL ?? "whisper-large-v3-turbo",
+  elevenLabsVoiceId: process.env.ELEVENLABS_VOICE_ID ?? "pqHfZKP75CvOlQylNhV4",
+  elevenLabsModelId: process.env.ELEVENLABS_MODEL_ID ?? "eleven_multilingual_v2",
+};
+
+export async function getCloneSettings(): Promise<CloneSettings> {
+  try {
+    const [row] = await db
+      .select()
+      .from(personaConfig)
+      .orderBy(desc(personaConfig.updatedAt))
+      .limit(1);
+
+    if (!row) {
+      return defaultCloneSettings;
+    }
+
+    return {
+      cloneSystemPrompt:
+        row.cloneSystemPrompt ?? defaultCloneSettings.cloneSystemPrompt,
+      cloneVoiceSystemPrompt:
+        row.cloneVoiceSystemPrompt ??
+        defaultCloneSettings.cloneVoiceSystemPrompt,
+      groqChatModel: row.groqChatModel ?? defaultCloneSettings.groqChatModel,
+      groqTranscriptionModel:
+        row.groqTranscriptionModel ??
+        defaultCloneSettings.groqTranscriptionModel,
+      elevenLabsVoiceId:
+        row.elevenLabsVoiceId ?? defaultCloneSettings.elevenLabsVoiceId,
+      elevenLabsModelId:
+        row.elevenLabsModelId ?? defaultCloneSettings.elevenLabsModelId,
+    };
+  } catch (_error) {
+    return defaultCloneSettings;
+  }
+}
+
+export async function saveCloneSettings(settings: Partial<CloneSettings>) {
+  try {
+    const current = await getCloneSettings();
+    const merged: CloneSettings = {
+      cloneSystemPrompt: settings.cloneSystemPrompt ?? current.cloneSystemPrompt,
+      cloneVoiceSystemPrompt:
+        settings.cloneVoiceSystemPrompt ?? current.cloneVoiceSystemPrompt,
+      groqChatModel: settings.groqChatModel ?? current.groqChatModel,
+      groqTranscriptionModel:
+        settings.groqTranscriptionModel ?? current.groqTranscriptionModel,
+      elevenLabsVoiceId: settings.elevenLabsVoiceId ?? current.elevenLabsVoiceId,
+      elevenLabsModelId: settings.elevenLabsModelId ?? current.elevenLabsModelId,
+    };
+
+    const [latest] = await db
+      .select({ id: personaConfig.id })
+      .from(personaConfig)
+      .orderBy(desc(personaConfig.updatedAt))
+      .limit(1);
+
+    if (!latest) {
+      await db.execute(sql`
+        insert into persona_config (
+          clone_system_prompt,
+          clone_voice_system_prompt,
+          groq_chat_model,
+          groq_transcription_model,
+          elevenlabs_voice_id,
+          elevenlabs_model_id,
+          updated_at
+        ) values (
+          ${merged.cloneSystemPrompt},
+          ${merged.cloneVoiceSystemPrompt},
+          ${merged.groqChatModel},
+          ${merged.groqTranscriptionModel},
+          ${merged.elevenLabsVoiceId},
+          ${merged.elevenLabsModelId},
+          now()
+        )
+      `);
+      return;
+    }
+
+    await db
+      .update(personaConfig)
+      .set({
+        cloneSystemPrompt: merged.cloneSystemPrompt,
+        cloneVoiceSystemPrompt: merged.cloneVoiceSystemPrompt,
+        groqChatModel: merged.groqChatModel,
+        groqTranscriptionModel: merged.groqTranscriptionModel,
+        elevenLabsVoiceId: merged.elevenLabsVoiceId,
+        elevenLabsModelId: merged.elevenLabsModelId,
+        updatedAt: new Date(),
+      })
+      .where(eq(personaConfig.id, latest.id));
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to save clone settings"
     );
   }
 }

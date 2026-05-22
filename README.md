@@ -69,3 +69,30 @@ pnpm dev
 ```
 
 Your app template should now be running on [localhost:3000](http://localhost:3000).
+
+## n8n Text + Voice Mode
+
+Set `N8N_BASE_URL` (and optional webhook paths) to route chat through n8n endpoints:
+
+- `POST /webhook/chat/text` for text requests (displayed with smooth streaming in UI)
+- `POST /webhook/chat/voice` for voice requests (audio response played in the client)
+
+The included Postman collection in `postman/` matches these webhook paths and can be reused for endpoint validation.
+
+## Direct Groq + ElevenLabs Mode
+
+If `GROQ_API_KEY` is set, `/api/chat` uses direct Groq streaming for text responses in the UI.
+
+If `GROQ_API_KEY` and `ELEVENLABS_API_KEY` are set, `/api/chat/voice` uses:
+
+- Groq Whisper transcription
+- Groq chat completion
+- ElevenLabs TTS audio response
+
+For Postman compatibility without n8n, these routes are also available:
+
+- `POST /api/webhook/chat/text`
+- `POST /api/webhook/chat/voice`
+- `GET /api/healthz`
+
+Runtime settings (prompts/models/voice IDs) can be edited from `/settings` and are persisted in Supabase (`persona_config` table).

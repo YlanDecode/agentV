@@ -1,0 +1,1024 @@
+{
+  "info": {
+    "_postman_id": "ddca2c27-3eba-4abd-9cd8-d3ca53cb438a",
+    "name": "Clone IA — POC Tests",
+    "description": "Collection complète pour tester les 4 endpoints du workflow Clone IA n8n.\n\n**Avant de lancer :**\n1. Activer le workflow dans n8n\n2. Renseigner la variable `n8n_url` dans l'onglet Variables\n3. Lancer les requêtes dans l'ordre",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "21018382",
+    "_collection_link": "https://go.postman.co/collection/21018382-ddca2c27-3eba-4abd-9cd8-d3ca53cb438a?source=collection_link"
+  },
+  "item": [
+    {
+      "name": "🔍 0 — Health Check",
+      "item": [
+        {
+          "name": "Ping n8n",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('n8n est joignable', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{n8n_url}}/healthz",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "healthz"
+              ]
+            },
+            "description": "Vérifie que n8n est bien joignable.\n✅ Attendu : 200 OK"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "💬 1 — API Texte (Flow 1)",
+      "item": [
+        {
+          "name": "1.1 — Message simple",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "const body = pm.response.json();",
+                  "",
+                  "pm.test('success = true', () => pm.expect(body.success).to.be.true);",
+                  "pm.test('response non vide', () => pm.expect(body.response).to.be.a('string').and.not.empty);",
+                  "pm.test('session_id présent', () => pm.expect(body.session_id).to.exist);",
+                  "pm.test('timestamp présent', () => pm.expect(body.timestamp).to.exist);",
+                  "",
+                  "pm.test('Temps de réponse < 8s', () => pm.expect(pm.response.responseTime).to.be.below(8000));",
+                  "",
+                  "console.log('Réponse agent :', body.response);",
+                  "console.log('Temps         :', pm.response.responseTime + 'ms');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"message\": \"Bonjour !\",\n  \"channel\": \"web\",\n  \"user_name\": \"Testeur Postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Test de base — l'agent doit répondre à un simple bonjour.\n\n✅ Attendu :\n- status 200\n- body.success = true\n- body.response non vide\n- body.session_id présent\n- body.timestamp présent"
+          },
+          "response": []
+        },
+        {
+          "name": "1.2 — Question sur le service",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Réponse non vide', () => pm.expect(body.response).to.be.a('string').and.not.empty);",
+                  "console.log('Réponse agent :', body.response);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"message\": \"Quels sont vos tarifs ?\",\n  \"channel\": \"web\",\n  \"user_name\": \"Testeur Postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Vérifie que l'agent répond à une question métier courante.\n\n✅ Attendu : réponse cohérente avec le domaine de la personne clonée"
+          },
+          "response": []
+        },
+        {
+          "name": "1.3 — Test mémoire (envoyer APRÈS 1.1 et 1.2)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Réponse non vide', () => pm.expect(body.response).to.be.a('string').and.not.empty);",
+                  "console.log('Test mémoire — réponse :', body.response);",
+                  "console.log('✅ Vérifier manuellement que la réponse fait référence aux échanges précédents');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"message\": \"Tu te souviens de ce qu'on vient de dire ?\",\n  \"channel\": \"web\",\n  \"user_name\": \"Testeur Postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Vérifie que l'agent se souvient des échanges précédents.\n⚠️ Envoyer APRÈS les requêtes 1.1 et 1.2 avec le MÊME session_id.\n\n✅ Attendu : la réponse mentionne les échanges précédents (bonjour, tarifs)"
+          },
+          "response": []
+        },
+        {
+          "name": "1.4 — Nouvelle session isolée",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Réponse non vide', () => pm.expect(body.response).to.be.a('string').and.not.empty);",
+                  "console.log('Isolation session — réponse :', body.response);",
+                  "console.log('✅ Vérifier que la réponse ne fait PAS référence aux échanges de test_postman_001');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"test_session_NOUVELLE\",\n  \"message\": \"Tu te souviens de moi ?\",\n  \"channel\": \"web\",\n  \"user_name\": \"Nouvel utilisateur\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Vérifie que les sessions sont bien isolées.\nCette requête utilise un session_id différent.\n\n✅ Attendu : l'agent ne se souvient pas des échanges de la session 1"
+          },
+          "response": []
+        },
+        {
+          "name": "1.5 — Message vide (erreur attendue)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "console.log('Status reçu :', pm.response.status);",
+                  "console.log('Body reçu   :', pm.response.text());",
+                  "pm.test('Erreur gérée proprement (pas de 500)', () => {",
+                  "  pm.expect(pm.response.code).to.not.equal(500);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"message\": \"\",\n  \"channel\": \"web\",\n  \"user_name\": \"Testeur Postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Envoie un message vide — doit retourner une erreur.\n\n✅ Attendu : status 4xx ou réponse d'erreur (pas de crash silencieux)"
+          },
+          "response": []
+        }
+      ],
+      "description": "Tests du endpoint POST /webhook/chat/text\nCe flow est le cœur de l'agent — il gère toutes les réponses texte."
+    },
+    {
+      "name": "🎙️ 2 — API Vocale (Flow 2)",
+      "item": [
+        {
+          "name": "2.1 — Note vocale (fichier audio)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('Réponse est de l\\'audio', () => {",
+                  "  const ct = pm.response.headers.get('Content-Type') || '';",
+                  "  pm.expect(ct).to.include('audio');",
+                  "});",
+                  "",
+                  "pm.test('Session ID dans headers', () => {",
+                  "  const sessionHeader = pm.response.headers.get('X-Session-Id');",
+                  "  pm.expect(sessionHeader).to.exist;",
+                  "});",
+                  "",
+                  "pm.test('Temps de réponse < 15s', () => pm.expect(pm.response.responseTime).to.be.below(15000));",
+                  "",
+                  "console.log('Temps de réponse vocal :', pm.response.responseTime + 'ms');",
+                  "console.log('Content-Type           :', pm.response.headers.get('Content-Type'));",
+                  "console.log('Transcription          :', pm.response.headers.get('X-Transcription') || 'non dispo');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "audio",
+                  "type": "file",
+                  "description": "⚠️ Sélectionner un fichier audio .mp3, .ogg ou .webm depuis votre machine",
+                  "value": ""
+                },
+                {
+                  "key": "session_id",
+                  "value": "{{session_id}}",
+                  "type": "text"
+                },
+                {
+                  "key": "channel",
+                  "value": "web",
+                  "type": "text"
+                },
+                {
+                  "key": "user_name",
+                  "value": "Testeur Postman",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/voice",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "voice"
+              ]
+            },
+            "description": "Envoie un fichier audio et reçoit une réponse audio avec la voix clonée.\n\n**Comment préparer le fichier :**\n- Enregistrer un message vocal court (5-15 secondes)\n- Format accepté : .mp3, .ogg, .webm, .wav\n- Cliquer sur le champ 'audio' et sélectionner le fichier\n\n✅ Attendu :\n- status 200\n- Content-Type: audio/mpeg\n- Fichier audio en réponse (voix clonée)"
+          },
+          "response": []
+        }
+      ],
+      "description": "Tests du endpoint POST /webhook/chat/voice\nNécessite un fichier audio .mp3 ou .ogg local."
+    },
+    {
+      "name": "📡 3 — Canaux différents",
+      "item": [
+        {
+          "name": "3.1 — Canal web",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json(); console.log('[WEB] Réponse :', b.response);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"web_test_001\",\n  \"message\": \"Bonjour depuis le widget web\",\n  \"channel\": \"web\",\n  \"user_name\": \"Visiteur Web\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Simule un appel depuis le widget web.\n✅ Attendu : réponse normale, session préfixée web_"
+          },
+          "response": []
+        },
+        {
+          "name": "3.2 — Canal Telegram (simulé)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json(); console.log('[TELEGRAM] Réponse :', b.response);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"tg_123456789\",\n  \"message\": \"Bonjour depuis Telegram\",\n  \"channel\": \"telegram\",\n  \"user_name\": \"User Telegram\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Simule un appel depuis le bridge Telegram.\n✅ Attendu : réponse normale, session préfixée tg_"
+          },
+          "response": []
+        }
+      ],
+      "description": "Vérifie que le même endpoint accepte les appels de différents canaux."
+    },
+    {
+      "name": "⚡ 4 — Performance",
+      "item": [
+        {
+          "name": "4.1 — Mesure latence texte",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const t = pm.response.responseTime;",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Réponse < 6s (acceptable)', () => pm.expect(t).to.be.below(6000));",
+                  "",
+                  "let perf = t < 3000 ? '✅ Excellent' : t < 6000 ? '✅ Acceptable' : t < 10000 ? '⚠️ Limite' : '❌ Trop lent';",
+                  "console.log(`Latence : ${t}ms — ${perf}`);",
+                  "console.log('Réponse :', pm.response.json().response);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"perf_test_001\",\n  \"message\": \"Quelle est votre disponibilité cette semaine ?\",\n  \"channel\": \"web\",\n  \"user_name\": \"Perf Test\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Mesure le temps de réponse de bout en bout.\n\nSeuils cibles :\n- ✅ Excellent  : < 3s\n- ✅ Acceptable : 3–6s\n- ⚠️ Limite     : 6–10s\n- ❌ Trop lent  : > 10s"
+          },
+          "response": []
+        }
+      ],
+      "description": "Mesure les temps de réponse réels."
+    },
+    {
+      "name": "✅ 5 — Validation POC (10 questions type)",
+      "item": [
+        {
+          "name": "Q01 — Salutation standard",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Q01 OK', () => pm.response.to.have.status(200));",
+                  "console.log('Q01 :', pm.response.json().response);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"validation_001\",\n  \"message\": \"Bonjour, je cherche des informations.\",\n  \"channel\": \"web\",\n  \"user_name\": \"Evaluateur\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Question 1/10 — Salutation standard"
+          },
+          "response": []
+        },
+        {
+          "name": "Q02 — Demande de tarif",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Q02 OK', () => pm.response.to.have.status(200));",
+                  "console.log('Q02 :', pm.response.json().response);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"validation_002\",\n  \"message\": \"Combien coûte votre service ?\",\n  \"channel\": \"web\",\n  \"user_name\": \"Evaluateur\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Question 2/10 — Demande de tarif"
+          },
+          "response": []
+        },
+        {
+          "name": "Q03 — Demande de rendez-vous",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Q03 OK', () => pm.response.to.have.status(200));",
+                  "console.log('Q03 :', pm.response.json().response);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"validation_003\",\n  \"message\": \"Est-ce que je peux prendre un rendez-vous cette semaine ?\",\n  \"channel\": \"web\",\n  \"user_name\": \"Evaluateur\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Question 3/10 — Demande de rendez-vous"
+          },
+          "response": []
+        },
+        {
+          "name": "Q04 — Réclamation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Q04 OK', () => pm.response.to.have.status(200));",
+                  "console.log('Q04 :', pm.response.json().response);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"validation_004\",\n  \"message\": \"J'ai un problème avec ma commande, personne ne me répond.\",\n  \"channel\": \"web\",\n  \"user_name\": \"Evaluateur\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Question 4/10 — Réclamation client"
+          },
+          "response": []
+        },
+        {
+          "name": "Q05 — Remerciement",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Q05 OK', () => pm.response.to.have.status(200));",
+                  "console.log('Q05 :', pm.response.json().response);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"validation_005\",\n  \"message\": \"Merci beaucoup pour votre aide, c'était très utile !\",\n  \"channel\": \"web\",\n  \"user_name\": \"Evaluateur\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Question 5/10 — Remerciement"
+          },
+          "response": []
+        },
+        {
+          "name": "Q06 — Question urgente",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Q06 OK', () => pm.response.to.have.status(200));",
+                  "console.log('Q06 :', pm.response.json().response);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"validation_006\",\n  \"message\": \"C'est urgent, j'ai besoin d'une réponse aujourd'hui.\",\n  \"channel\": \"web\",\n  \"user_name\": \"Evaluateur\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Question 6/10 — Demande urgente"
+          },
+          "response": []
+        },
+        {
+          "name": "Q07 — Refus ou limite",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Q07 OK', () => pm.response.to.have.status(200));",
+                  "console.log('Q07 :', pm.response.json().response);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"validation_007\",\n  \"message\": \"Pouvez-vous faire une exception pour moi ?\",\n  \"channel\": \"web\",\n  \"user_name\": \"Evaluateur\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Question 7/10 — Demande d'exception / refus"
+          },
+          "response": []
+        },
+        {
+          "name": "Q08 — Question hors sujet",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Q08 OK', () => pm.response.to.have.status(200));",
+                  "console.log('Q08 :', pm.response.json().response);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"validation_008\",\n  \"message\": \"Est-ce que vous faites aussi de la livraison à domicile ?\",\n  \"channel\": \"web\",\n  \"user_name\": \"Evaluateur\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Question 8/10 — Question hors domaine"
+          },
+          "response": []
+        },
+        {
+          "name": "Q09 — Conge / au revoir",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Q09 OK', () => pm.response.to.have.status(200));",
+                  "console.log('Q09 :', pm.response.json().response);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"validation_009\",\n  \"message\": \"Merci, bonne journée !\",\n  \"channel\": \"web\",\n  \"user_name\": \"Evaluateur\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Question 9/10 — Congé / au revoir"
+          },
+          "response": []
+        },
+        {
+          "name": "Q10 — Question personnelle",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Q10 OK', () => pm.response.to.have.status(200));",
+                  "console.log('Q10 :', pm.response.json().response);",
+                  "console.log('');",
+                  "console.log('=== FIN VALIDATION POC ===');",
+                  "console.log('Consulter les logs ci-dessus pour les 10 réponses.');",
+                  "console.log('Seuil validation : 7/10 jugées convaincantes par des testeurs humains.');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"validation_010\",\n  \"message\": \"Depuis combien de temps vous faites ce métier ?\",\n  \"channel\": \"web\",\n  \"user_name\": \"Evaluateur\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{n8n_url}}/webhook/chat/text",
+              "host": [
+                "{{n8n_url}}"
+              ],
+              "path": [
+                "webhook",
+                "chat",
+                "text"
+              ]
+            },
+            "description": "Question 10/10 — Question personnelle sur la personne"
+          },
+          "response": []
+        }
+      ],
+      "description": "Les 10 questions à soumettre pour valider que le clone ressemble à la vraie personne.\n\n📋 PROTOCOLE :\n1. Lancer toutes ces requêtes\n2. Copier les 10 réponses\n3. Les soumettre à 3 personnes qui connaissent bien la personne clonée\n4. Demander si les réponses ressemblent à la vraie personne (sans dire que c'est une IA)\n5. Seuil de validation : 7/10 jugées convaincantes"
+    }
+  ],
+  "variable": [
+    {
+      "key": "n8n_url",
+      "value": "REMPLACER_PAR_VOTRE_URL_N8N",
+      "type": "string",
+      "description": "URL de base n8n — ex: https://moncompte.app.n8n.cloud"
+    },
+    {
+      "key": "session_id",
+      "value": "test_postman_001",
+      "type": "string",
+      "description": "ID de session pour les tests — changer pour repartir d'une conversation vierge"
+    }
+  ]
+}

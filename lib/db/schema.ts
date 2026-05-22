@@ -1,5 +1,6 @@
 import type { InferSelectModel } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   foreignKey,
   json,
@@ -134,3 +135,16 @@ export const stream = pgTable(
 );
 
 export type Stream = InferSelectModel<typeof stream>;
+
+export const personaConfig = pgTable("persona_config", {
+  id: bigint("id", { mode: "number" }).primaryKey(),
+  cloneSystemPrompt: text("clone_system_prompt"),
+  cloneVoiceSystemPrompt: text("clone_voice_system_prompt"),
+  groqChatModel: text("groq_chat_model"),
+  groqTranscriptionModel: text("groq_transcription_model"),
+  elevenLabsVoiceId: text("elevenlabs_voice_id"),
+  elevenLabsModelId: text("elevenlabs_model_id"),
+  updatedAt: timestamp("updated_at"),
+});
+
+export type PersonaConfig = InferSelectModel<typeof personaConfig>;

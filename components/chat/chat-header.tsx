@@ -1,11 +1,10 @@
 "use client";
 
-import { PanelLeftIcon } from "lucide-react";
+import { BotIcon, PanelLeftIcon } from "lucide-react";
 import Link from "next/link";
 import { memo } from "react";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
-import { VercelIcon } from "./icons";
 import { VisibilitySelector, type VisibilityType } from "./visibility-selector";
 
 function PureChatHeader({
@@ -34,14 +33,12 @@ function PureChatHeader({
         <PanelLeftIcon className="size-4" />
       </Button>
 
-      <Link
-        className="flex size-8 items-center justify-center rounded-lg md:hidden"
-        href="https://vercel.com/templates/next.js/chatbot"
-        rel="noopener noreferrer"
-        target="_blank"
-      >
-        <VercelIcon size={14} />
-      </Link>
+      <div className="flex items-center gap-2 pl-1 md:hidden">
+        <div className="flex size-8 items-center justify-center rounded-lg border border-border/40 bg-background">
+          <BotIcon className="size-4" />
+        </div>
+        <span className="text-sm font-medium">blueAgent</span>
+      </div>
 
       {!isReadonly && (
         <VisibilitySelector
@@ -52,17 +49,18 @@ function PureChatHeader({
 
       <Button
         asChild
-        className="hidden rounded-lg bg-foreground px-4 text-background hover:bg-foreground/90 md:ml-auto md:flex"
+        className="hidden rounded-lg border border-border/40 px-4 md:ml-auto md:flex"
+        variant="ghost"
       >
-        <Link
-          href="https://vercel.com/templates/next.js/chatbot"
-          rel="noopener noreferrer"
-          target="_blank"
-        >
-          <VercelIcon size={16} />
-          Deploy with Vercel
-        </Link>
+        <Link href="/settings">POC Config</Link>
       </Button>
+
+      <div className="hidden items-center gap-2 md:flex">
+        <div className="flex size-8 items-center justify-center rounded-lg border border-border/40 bg-background">
+          <BotIcon className="size-4" />
+        </div>
+        <span className="text-sm font-medium">blueAgent</span>
+      </div>
     </header>
   );
 }

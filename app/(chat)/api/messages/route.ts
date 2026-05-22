@@ -3,20 +3,7 @@ import { getChatById, getMessagesByChatId } from "@/lib/db/queries";
 import { convertToUIMessages } from "@/lib/utils";
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const chatId = searchParams.get("chatId");
-
-  if (!chatId) {
-    return Response.json({ error: "chatId required" }, { status: 400 });
-  }
-
-  const [session, chat, messages] = await Promise.all([
-    auth(),
-    getChatById({ id: chatId }),
-    getMessagesByChatId({ id: chatId }),
-  ]);
-
-  if (!chat) {
+  if (!process.env.POSTGRES_URL) {
     return Response.json({
       messages: [],
       visibility: "private",
@@ -25,19 +12,50 @@ export async function GET(request: Request) {
     });
   }
 
-  if (
-    chat.visibility === "private" &&
-    (!session?.user || session.user.id !== chat.userId)
-  ) {
-    return Response.json({ error: "forbidden" }, { status: 403 });
+  const { searchParams } = new URL(request.url);
+  const chatId = searchParams.get("chatId");
+
+  if (!chatId) {
+    return Response.json({ error: "chatId required" }, { status: 400 });
   }
 
-  const isReadonly = !session?.user || session.user.id !== chat.userId;
+  try {
+    const [session, chat, messages] = await Promise.all([
+      auth(),
+      getChatById({ id: chatId }),
+      getMessagesByChatId({ id: chatId }),
+    ]);
 
-  return Response.json({
-    messages: convertToUIMessages(messages),
-    visibility: chat.visibility,
-    userId: chat.userId,
-    isReadonly,
-  });
+    if (!chat) {
+      return Response.json({
+        messages: [],
+        visibility: "private",
+        userId: null,
+        isReadonly: false,
+      });
+    }
+
+    if (
+      chat.visibility === "private" &&
+      (!session?.user || session.user.id !== chat.userId)
+    ) {
+      return Response.json({ error: "forbidden" }, { status: 403 });
+    }
+
+    const isReadonly = !session?.user || session.user.id !== chat.userId;
+
+    return Response.json({
+      messages: convertToUIMessages(messages),
+      visibility: chat.visibility,
+      userId: chat.userId,
+      isReadonly,
+    });
+  } catch {
+    return Response.json({
+      messages: [],
+      visibility: "private",
+      userId: null,
+      isReadonly: false,
+    });
+  }
 }
