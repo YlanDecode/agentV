@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { VoiceRecorder } from "@/components/voice/voice-recorder";
 import { useEffect, useState } from "react";
 
 type PersonaForm = {
@@ -206,16 +207,20 @@ export default function SettingsPage() {
                     }
                   />
                   <Field
-                    label="ElevenLabs voice ID"
+                    label="ElevenLabs voice ID (optionnel)"
                     value={persona.elevenLabsVoiceId}
                     onChange={(value) => update("elevenLabsVoiceId", value)}
                   />
                   <Field
-                    label="ElevenLabs model ID"
+                    label="ElevenLabs model ID (optionnel)"
                     value={persona.elevenLabsModelId}
                     onChange={(value) => update("elevenLabsModelId", value)}
                   />
                 </div>
+              </Section>
+
+              <Section title="Voix Clonées (F5-TTS)">
+                <VoiceRecorder />
               </Section>
 
               <div className="flex items-center gap-3">

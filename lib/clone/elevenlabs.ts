@@ -9,7 +9,10 @@ function getElevenLabsApiKey() {
 }
 
 export function isElevenLabsEnabled() {
-  return Boolean(process.env.ELEVENLABS_API_KEY);
+  return (
+    Boolean(process.env.ELEVENLABS_API_KEY) &&
+    process.env.ELEVENLABS_ENABLED !== "false"
+  );
 }
 
 export async function elevenLabsTextToSpeech(

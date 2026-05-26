@@ -44,6 +44,7 @@ import {
   DEFAULT_CHAT_MODEL,
   type ModelCapabilities,
 } from "@/lib/ai/models";
+import type { VoiceSample } from "@/lib/supabase/voices";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
@@ -220,6 +221,17 @@ function PureMultimodalInput({
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [isVoiceSessionActive, setIsVoiceSessionActive] = useState(false);
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
+  const { data: voices = [] } = useSWR<VoiceSample[]>(
+    interactionMode === "voice"
+      ? `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/voices`
+      : null,
+    (url: string) => fetch(url).then((r) => r.json()),
+    { revalidateOnFocus: false, dedupingInterval: 60_000 }
+  );
+  const [selectedVoiceId, setSelectedVoiceId] = useLocalStorage<string>(
+    "selected-voice-id",
+    "browser"
+  );
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
@@ -369,6 +381,12 @@ function PureMultimodalInput({
         formData.append("channel", "web");
         formData.append("user_name", "Web User");
 
+        const selectedVoice = voices.find((v) => v.id === selectedVoiceId);
+        if (selectedVoice) {
+          formData.append("voice_url", selectedVoice.url);
+          formData.append("voice_reference_text", selectedVoice.reference_text);
+        }
+
         const response = await fetch(
           `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/chat/voice`,
           {
@@ -382,7 +400,8 @@ function PureMultimodalInput({
           return;
         }
 
-        const transcription = response.headers.get("X-Transcription");
+        const transcriptionRaw = response.headers.get("X-Transcription");
+        const transcription = transcriptionRaw ? decodeURIComponent(transcriptionRaw) : null;
         const assistantTextHeader = response.headers.get("X-Assistant-Text");
         const assistantText = assistantTextHeader
           ? decodeURIComponent(assistantTextHeader)
@@ -408,15 +427,34 @@ function PureMultimodalInput({
           ]);
         }
 
-        const audioBlob = await response.blob();
-        const audioUrl = URL.createObjectURL(audioBlob);
-        activeAudioRef.current?.pause();
-        activeAudioRef.current = new Audio(audioUrl);
-        const audio = activeAudioRef.current;
-        audio.onplay = () => setIsAssistantSpeaking(true);
-        audio.onended = () => setIsAssistantSpeaking(false);
-        audio.onpause = () => setIsAssistantSpeaking(false);
-        void audio.play();
+        const contentType = response.headers.get("Content-Type") ?? "";
+
+        if (contentType.includes("application/json")) {
+          // Mode SpeechSynthesis (navigateur) : pas de fichier audio serveur
+          const data = (await response.json()) as { text?: string };
+          const textToSpeak = data.text ?? assistantText;
+          if (textToSpeak && typeof window !== "undefined" && window.speechSynthesis) {
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(textToSpeak);
+            utterance.lang = "fr-FR";
+            utterance.rate = 1.0;
+            utterance.onstart = () => setIsAssistantSpeaking(true);
+            utterance.onend = () => setIsAssistantSpeaking(false);
+            utterance.onerror = () => setIsAssistantSpeaking(false);
+            window.speechSynthesis.speak(utterance);
+          }
+        } else {
+          // Mode audio serveur (ElevenLabs ou F5-TTS)
+          const audioBlob = await response.blob();
+          const audioUrl = URL.createObjectURL(audioBlob);
+          activeAudioRef.current?.pause();
+          activeAudioRef.current = new Audio(audioUrl);
+          const audio = activeAudioRef.current;
+          audio.onplay = () => setIsAssistantSpeaking(true);
+          audio.onended = () => setIsAssistantSpeaking(false);
+          audio.onpause = () => setIsAssistantSpeaking(false);
+          void audio.play();
+        }
       } catch (_error) {
         toast.error("Impossible de traiter le message vocal.");
       } finally {
@@ -424,13 +462,16 @@ function PureMultimodalInput({
         setIsVoiceLoading(false);
       }
     },
-    [chatId, setMessages]
+    [chatId, setMessages, voices, selectedVoiceId]
   );
 
   const stopVoiceOutput = useCallback(() => {
     activeAudioRef.current?.pause();
     if (activeAudioRef.current) {
       activeAudioRef.current.currentTime = 0;
+    }
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
     }
     setIsAssistantSpeaking(false);
   }, []);
@@ -767,7 +808,7 @@ function PureMultimodalInput({
 
       {interactionMode === "text" ? (
         <PromptInput
-          className="[&>div]:rounded-2xl [&>div]:border [&>div]:border-border/30 [&>div]:bg-card/70 [&>div]:shadow-[var(--shadow-composer)] [&>div]:transition-shadow [&>div]:duration-300 [&>div]:focus-within:shadow-[var(--shadow-composer-focus)]"
+          className="[&>div]:rounded-2xl [&>div]:border [&>div]:border-border/30 [&>div]:bg-card/70 [&>div]:shadow-(--shadow-composer) [&>div]:transition-shadow [&>div]:duration-300 [&>div]:focus-within:shadow-(--shadow-composer-focus)"
           onSubmit={() => {
             if (input.startsWith("/")) {
               const query = input.slice(1).trim();
@@ -909,20 +950,88 @@ function PureMultimodalInput({
           </PromptInputFooter>
         </PromptInput>
       ) : (
-        <div className="overflow-hidden rounded-[32px] border border-border/10 bg-black px-4 py-6 shadow-[var(--shadow-composer)] md:px-6 md:py-8">
-          <div className="flex min-h-[520px] flex-col items-center justify-between md:min-h-[620px]">
-            <div className="flex w-full justify-center pt-1">
-              <div className="size-2 rounded-full bg-amber-400 shadow-[0_0_18px_rgba(251,191,36,0.85)]" />
+        <div className="overflow-hidden rounded-[28px] border border-white/6 bg-linear-to-b from-zinc-950 via-[#0f0f0f] to-zinc-950 px-5 py-6 shadow-(--shadow-composer) md:px-8 md:py-8">
+          <div className="flex min-h-[460px] flex-col items-center justify-between md:min-h-[540px]">
+
+            {/* Header */}
+            <div className="flex w-full items-center justify-between gap-2">
+              <span className="text-[10px] font-semibold tracking-[0.18em] text-white/20 uppercase shrink-0">
+                Agent Vocal
+              </span>
+              <div className="flex items-center gap-2 min-w-0">
+                {voices.length > 0 && (
+                  <select
+                    className="h-6 max-w-[130px] truncate rounded-lg border border-white/10 bg-white/5 px-2 text-[10px] text-white/50 outline-none hover:bg-white/8 focus:border-white/20"
+                    onChange={(e) => setSelectedVoiceId(e.target.value)}
+                    value={selectedVoiceId}
+                  >
+                    <option value="browser">Navigateur (TTS)</option>
+                    {voices.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <div
+                  className={cn(
+                    "size-1.5 rounded-full transition-all duration-500 shrink-0",
+                    isVoiceSessionActive
+                      ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.9)]"
+                      : "bg-white/15"
+                  )}
+                />
+                <span className="text-[10px] font-medium tracking-wide text-white/25 shrink-0">
+                  {voiceStatusShort}
+                </span>
+              </div>
             </div>
 
-            <div className="flex flex-1 items-center justify-center py-8">
+            {/* Mic button zone */}
+            <div className="relative flex flex-1 items-center justify-center py-6">
+              {/* Pulsing rings — recording */}
+              {isRecordingVoice && (
+                <>
+                  <div
+                    className="absolute size-[190px] md:size-[230px] rounded-full border border-white/10 animate-ping"
+                    style={{ animationDuration: "1.4s" }}
+                  />
+                  <div
+                    className="absolute size-[230px] md:size-[275px] rounded-full border border-white/5 animate-ping"
+                    style={{ animationDuration: "1.9s", animationDelay: "0.25s" }}
+                  />
+                </>
+              )}
+              {/* Soft glow rings — speaking */}
+              {isAssistantSpeaking && (
+                <>
+                  <div
+                    className="absolute size-[190px] md:size-[230px] rounded-full border border-white/7 animate-ping"
+                    style={{ animationDuration: "1.8s" }}
+                  />
+                  <div
+                    className="absolute size-[225px] md:size-[265px] rounded-full border border-white/4 animate-ping"
+                    style={{ animationDuration: "2.4s", animationDelay: "0.4s" }}
+                  />
+                </>
+              )}
+
               <button
                 className={cn(
-                  "relative flex size-[240px] items-center justify-center rounded-full bg-white transition-all duration-300 md:size-[360px]",
-                  isVoiceSessionActive &&
-                    "scale-[1.03] shadow-[0_0_120px_rgba(255,255,255,0.22)]",
+                  "relative z-10 flex size-[150px] md:size-[180px] flex-col items-center justify-center gap-2.5 rounded-full transition-all duration-500",
+                  !isVoiceSessionActive &&
+                    "bg-white hover:bg-white/95 cursor-pointer active:scale-95 shadow-[0_8px_40px_rgba(255,255,255,0.12)]",
+                  isRecordingVoice &&
+                    "bg-white shadow-[0_0_50px_rgba(255,255,255,0.18)]",
                   isVoiceLoading &&
-                    "animate-pulse shadow-[0_0_120px_rgba(255,255,255,0.16)]"
+                    "bg-white/6 border border-white/10 cursor-default",
+                  isAssistantSpeaking &&
+                    "bg-white/6 border border-white/10 cursor-default",
+                  isVoiceSessionActive &&
+                    !isRecordingVoice &&
+                    !isVoiceLoading &&
+                    !isAssistantSpeaking &&
+                    "bg-white/6 border border-white/10 cursor-default"
                 )}
                 disabled={isVoiceSessionActive}
                 onClick={() => {
@@ -933,42 +1042,78 @@ function PureMultimodalInput({
                 type="button"
               >
                 {isRecordingVoice ? (
-                  <SquareIcon className="size-8 fill-current text-black" />
+                  <>
+                    <div className="flex items-end gap-[3px]" style={{ height: 28 }}>
+                      {[14, 22, 28, 20, 12].map((h, i) => (
+                        <div
+                          key={i}
+                          className="w-[3px] rounded-full bg-black animate-bounce"
+                          style={{
+                            height: h,
+                            animationDelay: `${i * 90}ms`,
+                            animationDuration: "550ms",
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <span className="text-[9px] font-semibold tracking-[0.15em] text-black/40 uppercase">
+                      Écoute
+                    </span>
+                  </>
                 ) : isVoiceLoading ? (
-                  <div className="text-sm font-medium text-black">...</div>
+                  <>
+                    <div className="size-7 rounded-full border-2 border-white/15 border-t-white/50 animate-spin" />
+                    <span className="text-[9px] font-semibold tracking-[0.15em] text-white/30 uppercase">
+                      Analyse
+                    </span>
+                  </>
+                ) : isAssistantSpeaking ? (
+                  <>
+                    <div className="flex items-end gap-[3px]" style={{ height: 28 }}>
+                      {[10, 24, 16, 28, 18].map((h, i) => (
+                        <div
+                          key={i}
+                          className="w-[3px] rounded-full bg-white/50 animate-bounce"
+                          style={{
+                            height: h,
+                            animationDelay: `${i * 110}ms`,
+                            animationDuration: "680ms",
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <span className="text-[9px] font-semibold tracking-[0.15em] text-white/30 uppercase">
+                      Parle
+                    </span>
+                  </>
+                ) : isVoiceSessionActive ? (
+                  <>
+                    <MicIcon className="size-7 text-white/30" />
+                    <span className="text-[9px] font-semibold tracking-[0.15em] text-white/20 uppercase">
+                      En attente
+                    </span>
+                  </>
                 ) : (
-                  <MicIcon className="size-12 text-black" />
+                  <>
+                    <MicIcon className="size-9 text-black" />
+                    <span className="text-[9px] font-semibold tracking-[0.15em] text-black/40 uppercase">
+                      Démarrer
+                    </span>
+                  </>
                 )}
               </button>
             </div>
 
-            <div className="flex flex-col items-center gap-2 pb-6 text-center">
-              <div className="flex items-center gap-1.5">
-                {[0, 1, 2, 3].map((index) => (
-                  <span
-                    className={cn(
-                      "size-3 rounded-full bg-white transition-opacity",
-                      isVoiceSessionActive ||
-                        isVoiceLoading ||
-                        isAssistantSpeaking
-                        ? "animate-pulse opacity-100"
-                        : "opacity-80"
-                    )}
-                    key={index}
-                    style={{ animationDelay: `${index * 120}ms` }}
-                  />
-                ))}
-              </div>
-              <p className="text-sm text-white">{voiceStatusShort}</p>
-              <p className="max-w-xs text-xs text-white/60">
-                {voiceStatusLabel}
-              </p>
-            </div>
+            {/* Status label */}
+            <p className="max-w-60 pb-5 text-center text-[11px] leading-relaxed text-white/25">
+              {voiceStatusLabel}
+            </p>
 
-            <div className="grid w-full grid-cols-3 items-end gap-3">
+            {/* Bottom controls */}
+            <div className="grid w-full grid-cols-3 items-center gap-3">
               <div className="flex justify-start">
                 <Button
-                  className="rounded-full border border-white/15 bg-white/5 text-white hover:bg-white/10"
+                  className="h-8 rounded-full border border-white/10 bg-transparent px-4 text-[12px] text-white/40 hover:bg-white/5 hover:text-white/70 transition-colors"
                   onClick={() => setInteractionMode("text")}
                   type="button"
                   variant="ghost"
@@ -979,23 +1124,19 @@ function PureMultimodalInput({
 
               <div className="flex justify-center">
                 <button
-                  className="flex size-16 items-center justify-center rounded-full bg-red-500 text-white shadow-[0_12px_32px_rgba(239,68,68,0.35)] transition-transform hover:scale-105"
-                  onClick={() => {
-                    stopVoiceSession();
-                  }}
+                  className="flex size-12 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/40 transition-all duration-200 hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-400"
+                  onClick={() => stopVoiceSession()}
                   type="button"
                 >
-                  <span className="text-3xl leading-none">×</span>
+                  <SquareIcon className="size-3.5 fill-current" />
                 </button>
               </div>
 
               <div className="flex justify-end">
-                <div className="min-w-[88px] text-right">
-                  <ModelSelectorCompact
-                    onModelChange={onModelChange}
-                    selectedModelId={selectedModelId}
-                  />
-                </div>
+                <ModelSelectorCompact
+                  onModelChange={onModelChange}
+                  selectedModelId={selectedModelId}
+                />
               </div>
             </div>
           </div>

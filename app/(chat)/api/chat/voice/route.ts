@@ -2,6 +2,7 @@ import {
   elevenLabsTextToSpeech,
   isElevenLabsEnabled,
 } from "@/lib/clone/elevenlabs";
+import { f5ttsTextToSpeech, isF5TTSEnabled } from "@/lib/clone/f5tts";
 import {
   groqChatCompletion,
   groqTranscribeAudio,
@@ -14,9 +15,9 @@ import { buildSystemPrompt, getCloneSettings } from "@/lib/supabase/poc-config";
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
-  const isDirectVoiceEnabled = isGroqCloneEnabled() && isElevenLabsEnabled();
+  const hasGroq = isGroqCloneEnabled();
 
-  if (!isDirectVoiceEnabled && !isN8nModeEnabled()) {
+  if (!hasGroq && !isN8nModeEnabled()) {
     return Response.json(
       { error: "Voice endpoint is not configured" },
       { status: 400 }
@@ -33,9 +34,13 @@ export async function POST(request: Request) {
   const sessionId = String(body.get("session_id") ?? crypto.randomUUID());
   const channel = String(body.get("channel") ?? "web");
   const userName = String(body.get("user_name") ?? "Utilisateur");
+  const voiceUrl = body.get("voice_url") ? String(body.get("voice_url")) : null;
+  const voiceReferenceText = body.get("voice_reference_text")
+    ? String(body.get("voice_reference_text"))
+    : null;
 
   try {
-    if (isDirectVoiceEnabled) {
+    if (hasGroq) {
       const cloneSettings = await getCloneSettings();
       const voiceSystemPrompt = await buildSystemPrompt({ mode: "voice" });
       const transcription = await groqTranscribeAudio(
@@ -55,20 +60,6 @@ export async function POST(request: Request) {
         ],
         cloneSettings.groqChatModel
       );
-      const tts = await elevenLabsTextToSpeech(textResponse, {
-        voiceId: cloneSettings.elevenLabsVoiceId,
-        modelId: cloneSettings.elevenLabsModelId,
-      });
-      const audioBuffer = await tts.arrayBuffer();
-
-      const headers = new Headers();
-      headers.set(
-        "Content-Type",
-        tts.headers.get("Content-Type") ?? "audio/mpeg"
-      );
-      headers.set("X-Session-Id", sessionId);
-      headers.set("X-Transcription", transcription);
-      headers.set("X-Assistant-Text", encodeURIComponent(textResponse));
 
       try {
         await saveConversationToSupabase({
@@ -82,7 +73,55 @@ export async function POST(request: Request) {
         console.error("Failed to save voice conversation", error);
       }
 
-      return new Response(audioBuffer, { status: 200, headers });
+      // Priorité TTS : ElevenLabs → F5-TTS → SpeechSynthesis (navigateur)
+      if (isElevenLabsEnabled()) {
+        const tts = await elevenLabsTextToSpeech(textResponse, {
+          voiceId: cloneSettings.elevenLabsVoiceId,
+          modelId: cloneSettings.elevenLabsModelId,
+        });
+        const audioBuffer = await tts.arrayBuffer();
+        const headers = new Headers();
+        headers.set(
+          "Content-Type",
+          tts.headers.get("Content-Type") ?? "audio/mpeg"
+        );
+        headers.set("X-Session-Id", sessionId);
+        headers.set("X-Transcription", encodeURIComponent(transcription));
+        headers.set("X-Assistant-Text", encodeURIComponent(textResponse));
+        return new Response(audioBuffer, { status: 200, headers });
+      }
+
+      if (isF5TTSEnabled() || (voiceUrl && process.env.F5TTS_API_URL)) {
+        try {
+          const tts = await f5ttsTextToSpeech(textResponse, {
+            refAudioUrl: voiceUrl ?? undefined,
+            refText: voiceReferenceText ?? undefined,
+          });
+          const audioBuffer = await tts.arrayBuffer();
+          const headers = new Headers();
+          headers.set(
+            "Content-Type",
+            tts.headers.get("Content-Type") ?? "audio/wav"
+          );
+          headers.set("X-Session-Id", sessionId);
+          headers.set("X-Transcription", encodeURIComponent(transcription));
+          headers.set("X-Assistant-Text", encodeURIComponent(textResponse));
+          return new Response(audioBuffer, { status: 200, headers });
+        } catch (error) {
+          console.warn("F5-TTS failed, falling back to browser TTS", error);
+        }
+      }
+
+      // Fallback : retourner le texte pour que le navigateur parle via speechSynthesis
+      const headers = new Headers();
+      headers.set("Content-Type", "application/json");
+      headers.set("X-Session-Id", sessionId);
+      headers.set("X-Transcription", encodeURIComponent(transcription));
+      headers.set("X-Assistant-Text", encodeURIComponent(textResponse));
+      return new Response(JSON.stringify({ text: textResponse }), {
+        status: 200,
+        headers,
+      });
     }
 
     const formData = new FormData();
