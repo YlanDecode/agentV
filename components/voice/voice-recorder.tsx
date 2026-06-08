@@ -185,7 +185,7 @@ export function VoiceRecorder() {
       {/* Enregistrement */}
       <div className="rounded-xl border border-border bg-background p-4 space-y-4">
         <p className="text-xs font-medium text-muted-foreground">
-          Enregistre au moins 20-30 secondes de voix naturelle pour creer une voix Noiz.
+          Enregistre au moins 20-30 secondes de voix naturelle pour servir de reference F5-TTS.
         </p>
 
         <input

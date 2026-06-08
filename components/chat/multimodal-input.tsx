@@ -459,7 +459,7 @@ function PureMultimodalInput({
             window.speechSynthesis.speak(utterance);
           }
         } else {
-          // Mode audio serveur (Noiz)
+          // Mode audio serveur (HuggingFace/F5-TTS ou provider configure)
           const audioBlob = await response.blob();
           const audioUrl = URL.createObjectURL(audioBlob);
           activeAudioRef.current?.pause();
