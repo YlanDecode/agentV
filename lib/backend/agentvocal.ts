@@ -126,6 +126,19 @@ export async function proxyVoiceChatRequest(request: Request) {
   );
   headers.set("X-Transcription", encodeURIComponent(transcription));
 
+  const debugProvider = chatResponse.headers.get("X-Debug-Tts-Provider");
+  const debugCache = chatResponse.headers.get("X-Debug-Tts-Cache");
+  const debugVoiceId = chatResponse.headers.get("X-Debug-Voice-Id");
+  if (debugProvider) {
+    headers.set("X-Debug-Tts-Provider", debugProvider);
+  }
+  if (debugCache) {
+    headers.set("X-Debug-Tts-Cache", debugCache);
+  }
+  if (debugVoiceId) {
+    headers.set("X-Debug-Voice-Id", debugVoiceId);
+  }
+
   const contentType = chatResponse.headers.get("Content-Type") ?? "application/json";
   if (contentType.includes("application/json")) {
     const payload = (await chatResponse.json()) as {

@@ -23,7 +23,7 @@ export async function GET(request: Request) {
   const session = await auth();
 
   if (!session?.user) {
-    return new ChatbotError("unauthorized:vote").toResponse();
+    return Response.json([], { status: 200 });
   }
 
   const chat = await getChatById({ id: chatId });

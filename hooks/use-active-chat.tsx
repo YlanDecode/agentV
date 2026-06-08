@@ -4,6 +4,7 @@ import type { UseChatHelpers } from "@ai-sdk/react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { usePathname } from "next/navigation";
+import { useSession } from "next-auth/react";
 import {
   createContext,
   type Dispatch,
@@ -58,6 +59,7 @@ function extractChatId(pathname: string): string | null {
 
 export function ActiveChatProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const { data: session, status: sessionStatus } = useSession();
   const { setDataStream } = useDataStream();
   const { mutate } = useSWRConfig();
 
@@ -238,7 +240,10 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
   const isReadonly = isNewChat ? false : (chatData?.isReadonly ?? false);
 
   const { data: votes } = useSWR<Vote[]>(
-    !isReadonly && messages.length >= 2
+    !isReadonly &&
+      messages.length >= 2 &&
+      sessionStatus === "authenticated" &&
+      Boolean(session?.user?.id)
       ? `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/vote?chatId=${chatId}`
       : null,
     fetcher,
