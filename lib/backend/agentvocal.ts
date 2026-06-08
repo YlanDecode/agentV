@@ -162,6 +162,7 @@ export async function proxyVoiceChatRequest(request: Request) {
   const debugProvider = chatResponse.headers.get("X-Debug-Tts-Provider");
   const debugCache = chatResponse.headers.get("X-Debug-Tts-Cache");
   const debugVoiceId = chatResponse.headers.get("X-Debug-Voice-Id");
+  const debugError = chatResponse.headers.get("X-Debug-Tts-Error");
   if (debugProvider) {
     headers.set("X-Debug-Tts-Provider", debugProvider);
   }
@@ -170,6 +171,9 @@ export async function proxyVoiceChatRequest(request: Request) {
   }
   if (debugVoiceId) {
     headers.set("X-Debug-Voice-Id", debugVoiceId);
+  }
+  if (debugError) {
+    headers.set("X-Debug-Tts-Error", debugError);
   }
 
   const contentType = chatResponse.headers.get("Content-Type") ?? "application/json";
