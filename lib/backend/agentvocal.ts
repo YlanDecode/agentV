@@ -46,6 +46,7 @@ async function readUpstreamError(response: Response, fallback: string) {
 
 type AgentVocalVoice = {
   url?: string | null;
+  reference_text?: string | null;
   noiz_voice_id?: string | null;
 };
 
@@ -86,11 +87,15 @@ export async function proxyVoiceChatRequest(request: Request) {
   const userName = String(body.get("user_name") ?? "Utilisateur");
   let voiceUrl = body.get("voice_url") ? String(body.get("voice_url")) : null;
   let voiceId = body.get("voice_id") ? String(body.get("voice_id")) : null;
+  let voiceReferenceText = body.get("voice_reference_text")
+    ? String(body.get("voice_reference_text"))
+    : null;
 
   if (!voiceUrl && !voiceId) {
     const defaultVoice = await getDefaultVoice();
     voiceUrl = defaultVoice?.url ?? null;
     voiceId = defaultVoice?.noiz_voice_id ?? null;
+    voiceReferenceText = defaultVoice?.reference_text ?? null;
   }
 
   const sttFormData = new FormData();
@@ -129,6 +134,9 @@ export async function proxyVoiceChatRequest(request: Request) {
   }
   if (voiceId) {
     chatPayload.voice_id = voiceId;
+  }
+  if (voiceReferenceText) {
+    chatPayload.voice_reference_text = voiceReferenceText;
   }
 
   const chatResponse = await agentVocalFetch("/chat", {
