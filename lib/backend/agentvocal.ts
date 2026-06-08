@@ -44,6 +44,25 @@ async function readUpstreamError(response: Response, fallback: string) {
   }
 }
 
+type AgentVocalVoice = {
+  url?: string | null;
+  noiz_voice_id?: string | null;
+};
+
+async function getDefaultVoice() {
+  try {
+    const response = await agentVocalFetch("/api/voices");
+    if (!response.ok) {
+      return null;
+    }
+
+    const voices = (await response.json()) as AgentVocalVoice[];
+    return voices.find((voice) => voice.url) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function proxyVoiceChatRequest(request: Request) {
   if (!isAgentVocalEnabled()) {
     return Response.json(
@@ -65,8 +84,14 @@ export async function proxyVoiceChatRequest(request: Request) {
   const sessionId = String(body.get("session_id") ?? crypto.randomUUID());
   const channel = String(body.get("channel") ?? "web");
   const userName = String(body.get("user_name") ?? "Utilisateur");
-  const voiceUrl = body.get("voice_url") ? String(body.get("voice_url")) : null;
-  const voiceId = body.get("voice_id") ? String(body.get("voice_id")) : null;
+  let voiceUrl = body.get("voice_url") ? String(body.get("voice_url")) : null;
+  let voiceId = body.get("voice_id") ? String(body.get("voice_id")) : null;
+
+  if (!voiceUrl && !voiceId) {
+    const defaultVoice = await getDefaultVoice();
+    voiceUrl = defaultVoice?.url ?? null;
+    voiceId = defaultVoice?.noiz_voice_id ?? null;
+  }
 
   const sttFormData = new FormData();
   sttFormData.append("audio", audio);
