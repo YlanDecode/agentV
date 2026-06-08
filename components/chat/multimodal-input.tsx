@@ -232,6 +232,18 @@ function PureMultimodalInput({
     "selected-voice-id",
     "browser"
   );
+
+  useEffect(() => {
+    if (interactionMode !== "voice" || voices.length === 0) {
+      return;
+    }
+
+    const selectedVoiceExists = voices.some((voice) => voice.id === selectedVoiceId);
+    if (!selectedVoiceExists) {
+      setSelectedVoiceId(voices[0].id);
+    }
+  }, [interactionMode, selectedVoiceId, setSelectedVoiceId, voices]);
+
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
@@ -447,7 +459,7 @@ function PureMultimodalInput({
             window.speechSynthesis.speak(utterance);
           }
         } else {
-          // Mode audio serveur (ElevenLabs ou F5-TTS)
+          // Mode audio serveur (Noiz)
           const audioBlob = await response.blob();
           const audioUrl = URL.createObjectURL(audioBlob);
           activeAudioRef.current?.pause();

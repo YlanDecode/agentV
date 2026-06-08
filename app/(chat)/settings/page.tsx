@@ -207,19 +207,19 @@ export default function SettingsPage() {
                     }
                   />
                   <Field
-                    label="ElevenLabs voice ID (optionnel)"
+                    label="Ancien voice ID ElevenLabs (ignore par Noiz)"
                     value={persona.elevenLabsVoiceId}
                     onChange={(value) => update("elevenLabsVoiceId", value)}
                   />
                   <Field
-                    label="ElevenLabs model ID (optionnel)"
+                    label="Ancien model ID ElevenLabs (ignore par Noiz)"
                     value={persona.elevenLabsModelId}
                     onChange={(value) => update("elevenLabsModelId", value)}
                   />
                 </div>
               </Section>
 
-              <Section title="Voix Clonées (F5-TTS)">
+              <Section title="Voix Clonees (Noiz)">
                 <VoiceRecorder />
               </Section>
 
