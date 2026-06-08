@@ -1,42 +1,54 @@
-import { createVoiceSample, listVoiceSamples, uploadVoiceToSupabase } from "@/lib/supabase/voices";
+import { agentVocalFetch, isAgentVocalEnabled } from "@/lib/backend/agentvocal";
 
 export async function GET() {
+  if (!isAgentVocalEnabled()) {
+    return Response.json([]);
+  }
+
   try {
-    const voices = await listVoiceSamples();
-    return Response.json(voices);
+    const response = await agentVocalFetch("/api/voices");
+    if (!response.ok) {
+      return Response.json([]);
+    }
+
+    return Response.json(await response.json());
   } catch {
     return Response.json([]);
   }
 }
 
 export async function POST(request: Request) {
+  if (!isAgentVocalEnabled()) {
+    return Response.json(
+      {
+        error:
+          "AGENTVOCAL_API_BASE_URL and AGENTVOCAL_API_KEY must be configured",
+      },
+      { status: 400 }
+    );
+  }
+
   const formData = await request.formData();
   const audio = formData.get("audio") as File | null;
-  const name = String(formData.get("name") ?? "Voix sans nom").trim();
-  const referenceText = String(formData.get("reference_text") ?? "").trim();
 
   if (!audio || audio.size === 0) {
     return Response.json({ error: "Audio manquant" }, { status: 400 });
   }
 
-  const ext = audio.type.includes("wav")
-    ? "wav"
-    : audio.type.includes("ogg")
-      ? "ogg"
-      : audio.type.includes("mp4")
-        ? "m4a"
-        : "webm";
+  try {
+    const response = await agentVocalFetch("/api/voices", {
+      method: "POST",
+      body: formData,
+    });
 
-  const safeName = name.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase();
-  const filename = `${Date.now()}-${safeName}.${ext}`;
-  const fileBuffer = await audio.arrayBuffer();
-
-  const publicUrl = await uploadVoiceToSupabase(filename, fileBuffer, audio.type || "audio/webm");
-  const voice = await createVoiceSample({
-    name,
-    url: publicUrl,
-    reference_text: referenceText,
-  });
-
-  return Response.json(voice, { status: 201 });
+    const payload = await response.text();
+    return new Response(payload, {
+      status: response.status,
+      headers: {
+        "Content-Type": response.headers.get("Content-Type") ?? "application/json",
+      },
+    });
+  } catch {
+    return Response.json({ error: "Voice upload failed" }, { status: 502 });
+  }
 }

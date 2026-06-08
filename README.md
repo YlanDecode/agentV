@@ -79,6 +79,21 @@ Set `N8N_BASE_URL` (and optional webhook paths) to route chat through n8n endpoi
 
 The included Postman collection in `postman/` matches these webhook paths and can be reused for endpoint validation.
 
+## AgentVOCAL Backend Mode
+
+Set these server-side variables in `.env.local` to delegate voice cloning and voice chat to the FastAPI backend:
+
+- `AGENTVOCAL_API_BASE_URL`
+- `AGENTVOCAL_API_KEY`
+
+When configured, these Next routes proxy to the backend while preserving the current frontend contract:
+
+- `POST /api/chat/voice`
+- `POST /api/webhook/chat/voice`
+- `GET /api/voices`
+- `POST /api/voices`
+- `DELETE /api/voices/:id`
+
 ## Direct Groq + ElevenLabs Mode
 
 If `GROQ_API_KEY` is set, `/api/chat` uses direct Groq streaming for text responses in the UI.

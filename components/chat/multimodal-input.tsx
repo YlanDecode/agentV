@@ -384,6 +384,9 @@ function PureMultimodalInput({
         const selectedVoice = voices.find((v) => v.id === selectedVoiceId);
         if (selectedVoice) {
           formData.append("voice_url", selectedVoice.url);
+          if (selectedVoice.noiz_voice_id) {
+            formData.append("voice_id", selectedVoice.noiz_voice_id);
+          }
           formData.append("voice_reference_text", selectedVoice.reference_text);
         }
 
