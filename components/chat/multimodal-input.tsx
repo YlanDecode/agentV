@@ -394,11 +394,12 @@ function PureMultimodalInput({
         formData.append("user_name", "Web User");
 
         const selectedVoice = voices.find((v) => v.id === selectedVoiceId);
-        if (selectedVoice) {
+        if (selectedVoiceId === "browser") {
+          formData.append("voice_mode", "browser");
+        } else if (selectedVoice) {
+          formData.append("voice_mode", "sample");
           formData.append("voice_url", selectedVoice.url);
-          if (selectedVoice.noiz_voice_id) {
-            formData.append("voice_id", selectedVoice.noiz_voice_id);
-          }
+          formData.append("voice_id", selectedVoice.id);
           formData.append("voice_reference_text", selectedVoice.reference_text);
         }
 
@@ -443,10 +444,38 @@ function PureMultimodalInput({
         }
 
         const contentType = response.headers.get("Content-Type") ?? "";
+        const ttsStatus = response.headers.get("X-Tts-Status") ?? "";
+        const ttsFallback = response.headers.get("X-Tts-Fallback") ?? "";
+        const ttsProvider = response.headers.get("X-Debug-Tts-Provider") ?? "";
+        const ttsErrorHeader = response.headers.get("X-Debug-Tts-Error") ?? "";
 
         if (contentType.includes("application/json")) {
-          // Mode SpeechSynthesis (navigateur) : pas de fichier audio serveur
-          const data = (await response.json()) as { text?: string };
+          const data = (await response.json()) as {
+            text?: string;
+            tts?: {
+              status?: string;
+              provider?: string;
+              error?: string;
+              fallback?: string;
+            };
+          };
+          const ttsStatusBody = data.tts?.status ?? "";
+          const ttsProviderBody = data.tts?.provider ?? "";
+          const ttsErrorBody = data.tts?.error ?? "";
+          const shouldWarnTtsFailure =
+            selectedVoiceId !== "browser" &&
+            (ttsStatus === "error" || ttsStatusBody === "error");
+
+          if (shouldWarnTtsFailure) {
+            toast.error(
+              ttsErrorHeader ||
+                ttsErrorBody ||
+                `La synthèse vocale serveur a échoué${ttsProvider || ttsProviderBody ? ` (${ttsProvider || ttsProviderBody})` : ""}. Bascule navigateur.`
+            );
+          }
+
+          // Mode SpeechSynthesis (navigateur) : selection explicite navigateur
+          // ou fallback navigateur annonce par le backend.
           const textToSpeak = data.text ?? assistantText;
           if (textToSpeak && typeof window !== "undefined" && window.speechSynthesis) {
             window.speechSynthesis.cancel();

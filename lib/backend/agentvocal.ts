@@ -45,9 +45,9 @@ async function readUpstreamError(response: Response, fallback: string) {
 }
 
 type AgentVocalVoice = {
+  id?: string | null;
   url?: string | null;
   reference_text?: string | null;
-  noiz_voice_id?: string | null;
 };
 
 async function getDefaultVoice() {
@@ -85,16 +85,17 @@ export async function proxyVoiceChatRequest(request: Request) {
   const sessionId = String(body.get("session_id") ?? crypto.randomUUID());
   const channel = String(body.get("channel") ?? "web");
   const userName = String(body.get("user_name") ?? "Utilisateur");
+  const voiceMode = body.get("voice_mode") ? String(body.get("voice_mode")) : "sample";
   let voiceUrl = body.get("voice_url") ? String(body.get("voice_url")) : null;
   let voiceId = body.get("voice_id") ? String(body.get("voice_id")) : null;
   let voiceReferenceText = body.get("voice_reference_text")
     ? String(body.get("voice_reference_text"))
     : null;
 
-  if (!voiceUrl && !voiceId) {
+  if (voiceMode !== "browser" && !voiceUrl && !voiceId) {
     const defaultVoice = await getDefaultVoice();
     voiceUrl = defaultVoice?.url ?? null;
-    voiceId = defaultVoice?.noiz_voice_id ?? null;
+    voiceId = defaultVoice?.id ?? null;
     voiceReferenceText = defaultVoice?.reference_text ?? null;
   }
 
@@ -123,7 +124,7 @@ export async function proxyVoiceChatRequest(request: Request) {
 
   const chatPayload: Record<string, unknown> = {
     messages: [{ role: "user", content: transcription }],
-    mode: "voice",
+    mode: voiceMode === "browser" ? "text" : "voice",
     session_id: sessionId,
     user_name: userName,
     channel,
@@ -163,6 +164,8 @@ export async function proxyVoiceChatRequest(request: Request) {
   const debugCache = chatResponse.headers.get("X-Debug-Tts-Cache");
   const debugVoiceId = chatResponse.headers.get("X-Debug-Voice-Id");
   const debugError = chatResponse.headers.get("X-Debug-Tts-Error");
+  const ttsStatus = chatResponse.headers.get("X-Tts-Status");
+  const ttsFallback = chatResponse.headers.get("X-Tts-Fallback");
   if (debugProvider) {
     headers.set("X-Debug-Tts-Provider", debugProvider);
   }
@@ -175,12 +178,27 @@ export async function proxyVoiceChatRequest(request: Request) {
   if (debugError) {
     headers.set("X-Debug-Tts-Error", debugError);
   }
+  if (ttsStatus) {
+    headers.set("X-Tts-Status", ttsStatus);
+  }
+  if (ttsFallback) {
+    headers.set("X-Tts-Fallback", ttsFallback);
+  }
 
   const contentType = chatResponse.headers.get("Content-Type") ?? "application/json";
   if (contentType.includes("application/json")) {
     const payload = (await chatResponse.json()) as {
       text?: string;
       session_id?: string;
+      tts?: {
+        requested?: boolean;
+        status?: string;
+        provider?: string;
+        cache?: string;
+        voice_id?: string;
+        error?: string;
+        fallback?: string;
+      };
     };
     if (payload.session_id) {
       headers.set("X-Session-Id", payload.session_id);

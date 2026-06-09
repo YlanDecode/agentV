@@ -18,7 +18,6 @@ export type VoiceSample = {
   name: string;
   url: string;
   reference_text: string;
-  noiz_voice_id?: string | null;
   created_at: string;
 };
 
