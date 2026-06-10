@@ -14,6 +14,17 @@ function getAgentVocalConfig() {
   };
 }
 
+function getAgentVocalWebSocketUrl() {
+  const { baseUrl } = getAgentVocalConfig();
+  const url = new URL(baseUrl);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  const trimmedPath = url.pathname.replace(/\/+$/, "");
+  url.pathname = `${trimmedPath}/ws`.replace(/\/+/g, "/");
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
 export function isAgentVocalEnabled() {
   return Boolean(
     process.env.AGENTVOCAL_API_BASE_URL?.trim() &&
@@ -62,6 +73,33 @@ async function getDefaultVoice() {
   } catch {
     return null;
   }
+}
+
+export async function createVoiceWsSession() {
+  const response = await agentVocalFetch("/ws/session", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const message = await readUpstreamError(response, "Voice session init failed");
+    throw new Error(message);
+  }
+
+  const payload = (await response.json()) as {
+    ticket?: string;
+    expires_in?: number;
+  };
+  if (!payload.ticket) {
+    throw new Error("Voice session ticket missing");
+  }
+
+  return {
+    wsUrl: `${getAgentVocalWebSocketUrl()}?ticket=${encodeURIComponent(payload.ticket)}`,
+    expiresIn: payload.expires_in ?? 0,
+  };
 }
 
 export async function proxyVoiceChatRequest(request: Request) {

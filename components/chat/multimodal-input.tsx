@@ -71,6 +71,51 @@ function setCookie(name: string, value: string) {
   document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAge}`;
 }
 
+type VoiceWsSession = {
+  wsUrl: string;
+  expiresIn: number;
+};
+
+type VoiceWsEvent = {
+  type: string;
+  session_id?: string;
+  turn_id?: number;
+  text?: string;
+  full_text?: string;
+  index?: number;
+  data?: string;
+  message?: string;
+};
+
+type VoiceTurnState = {
+  turnId: number | null;
+  userMessageId: string | null;
+  assistantMessageId: string | null;
+  assistantText: string;
+};
+
+function base64ToAudioBlob(data: string, mimeType = "audio/wav") {
+  const binary = atob(data);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new Blob([bytes], { type: mimeType });
+}
+
+function getPreferredRecorderMimeType() {
+  if (typeof MediaRecorder === "undefined") {
+    return "audio/webm";
+  }
+
+  if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+    return "audio/webm;codecs=opus";
+  }
+
+  if (MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")) {
+    return "audio/ogg;codecs=opus";
+  }
+
+  return "audio/webm";
+}
+
 function PureMultimodalInput({
   chatId,
   input,
@@ -238,7 +283,9 @@ function PureMultimodalInput({
       return;
     }
 
-    const selectedVoiceExists = voices.some((voice) => voice.id === selectedVoiceId);
+    const selectedVoiceExists =
+      selectedVoiceId === "browser" ||
+      voices.some((voice) => voice.id === selectedVoiceId);
     if (!selectedVoiceExists) {
       setSelectedVoiceId(voices[0].id);
     }
@@ -251,6 +298,7 @@ function PureMultimodalInput({
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const voiceChunksRef = useRef<Blob[]>([]);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const activeAudioUrlRef = useRef<string | null>(null);
   const isVoiceLoadingRef = useRef(false);
   const isRecordingVoiceRef = useRef(false);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -258,6 +306,21 @@ function PureMultimodalInput({
   const animationFrameRef = useRef<number | null>(null);
   const hasDetectedSpeechRef = useRef(false);
   const cancelCurrentTurnRef = useRef(false);
+  const recorderMimeTypeRef = useRef("audio/webm");
+  const wsRef = useRef<WebSocket | null>(null);
+  const wsReadyRef = useRef(false);
+  const wsClosingRef = useRef(false);
+  const voiceOutputModeRef = useRef<"browser" | "server">("browser");
+  const voiceTurnStateRef = useRef<VoiceTurnState>({
+    turnId: null,
+    userMessageId: null,
+    assistantMessageId: null,
+    assistantText: "",
+  });
+  const serverAudioQueueRef = useRef<Array<{ index: number; url: string }>>([]);
+  const isServerAudioPlayingRef = useRef(false);
+  const browserSpeechQueueRef = useRef<string[]>([]);
+  const isBrowserSpeechPlayingRef = useRef(false);
 
   useEffect(() => {
     isVoiceLoadingRef.current = isVoiceLoading;
@@ -364,6 +427,398 @@ function PureMultimodalInput({
     [setAttachments, uploadFile]
   );
 
+  const resetVoiceTurnState = useCallback((turnId: number | null = null) => {
+    voiceTurnStateRef.current = {
+      turnId,
+      userMessageId: null,
+      assistantMessageId: null,
+      assistantText: "",
+    };
+  }, []);
+
+  const upsertAssistantMessage = useCallback(
+    (text: string) => {
+      const currentState = voiceTurnStateRef.current;
+      const assistantMessageId = currentState.assistantMessageId ?? crypto.randomUUID();
+
+      voiceTurnStateRef.current = {
+        ...currentState,
+        assistantMessageId,
+        assistantText: text,
+      };
+
+      setMessages((current) => {
+        const exists = current.some((message) => message.id === assistantMessageId);
+        if (!exists) {
+          return [
+            ...current,
+            {
+              id: assistantMessageId,
+              role: "assistant",
+              parts: [{ type: "text", text }],
+            },
+          ];
+        }
+
+        return current.map((message) =>
+          message.id === assistantMessageId
+            ? {
+                ...message,
+                role: "assistant",
+                parts: [{ type: "text", text }],
+              }
+            : message
+        );
+      });
+    },
+    [setMessages]
+  );
+
+  const appendAssistantDelta = useCallback(
+    (delta: string) => {
+      if (!delta) {
+        return;
+      }
+      const nextText = `${voiceTurnStateRef.current.assistantText}${delta}`;
+      upsertAssistantMessage(nextText);
+    },
+    [upsertAssistantMessage]
+  );
+
+  const ensureUserTranscriptMessage = useCallback(
+    (text: string) => {
+      if (!text || voiceTurnStateRef.current.userMessageId) {
+        return;
+      }
+
+      const userMessageId = crypto.randomUUID();
+      voiceTurnStateRef.current = {
+        ...voiceTurnStateRef.current,
+        userMessageId,
+      };
+
+      setMessages((current) => [
+        ...current,
+        {
+          id: userMessageId,
+          role: "user",
+          parts: [{ type: "text", text }],
+        },
+      ]);
+    },
+    [setMessages]
+  );
+
+  const playNextServerAudio = useCallback(() => {
+    if (isServerAudioPlayingRef.current) {
+      return;
+    }
+
+    const nextItem = serverAudioQueueRef.current.shift();
+    if (!nextItem) {
+      return;
+    }
+
+    const audio = new Audio(nextItem.url);
+    activeAudioRef.current = audio;
+    activeAudioUrlRef.current = nextItem.url;
+    isServerAudioPlayingRef.current = true;
+
+    const finalize = () => {
+      if (activeAudioUrlRef.current) {
+        URL.revokeObjectURL(activeAudioUrlRef.current);
+        activeAudioUrlRef.current = null;
+      }
+      if (activeAudioRef.current === audio) {
+        activeAudioRef.current = null;
+      }
+      isServerAudioPlayingRef.current = false;
+      setIsAssistantSpeaking(false);
+      playNextServerAudio();
+    };
+
+    audio.onplay = () => setIsAssistantSpeaking(true);
+    audio.onended = finalize;
+    audio.onerror = finalize;
+    audio.onpause = () => {
+      if (audio.currentTime < audio.duration) {
+        setIsAssistantSpeaking(false);
+      }
+    };
+    void audio.play().catch(finalize);
+  }, []);
+
+  const enqueueServerAudioChunk = useCallback(
+    (index: number, base64Audio: string) => {
+      const audioBlob = base64ToAudioBlob(base64Audio);
+      const audioUrl = URL.createObjectURL(audioBlob);
+      serverAudioQueueRef.current.push({ index, url: audioUrl });
+      serverAudioQueueRef.current.sort((left, right) => left.index - right.index);
+      playNextServerAudio();
+    },
+    [playNextServerAudio]
+  );
+
+  const playNextBrowserSpeech = useCallback(() => {
+    if (isBrowserSpeechPlayingRef.current) {
+      return;
+    }
+    if (typeof window === "undefined" || !window.speechSynthesis) {
+      return;
+    }
+
+    const nextSentence = browserSpeechQueueRef.current.shift();
+    if (!nextSentence) {
+      return;
+    }
+
+    isBrowserSpeechPlayingRef.current = true;
+    const utterance = new SpeechSynthesisUtterance(nextSentence);
+    utterance.lang = "fr-FR";
+    utterance.rate = 1.0;
+    utterance.onstart = () => setIsAssistantSpeaking(true);
+    utterance.onend = () => {
+      isBrowserSpeechPlayingRef.current = false;
+      setIsAssistantSpeaking(false);
+      playNextBrowserSpeech();
+    };
+    utterance.onerror = () => {
+      isBrowserSpeechPlayingRef.current = false;
+      setIsAssistantSpeaking(false);
+      playNextBrowserSpeech();
+    };
+    window.speechSynthesis.speak(utterance);
+  }, []);
+
+  const enqueueBrowserSpeechSentence = useCallback(
+    (sentence: string) => {
+      if (!sentence.trim()) {
+        return;
+      }
+      browserSpeechQueueRef.current.push(sentence);
+      playNextBrowserSpeech();
+    },
+    [playNextBrowserSpeech]
+  );
+
+  const stopVoiceOutput = useCallback(() => {
+    activeAudioRef.current?.pause();
+    if (activeAudioRef.current) {
+      activeAudioRef.current.currentTime = 0;
+      activeAudioRef.current = null;
+    }
+    if (activeAudioUrlRef.current) {
+      URL.revokeObjectURL(activeAudioUrlRef.current);
+      activeAudioUrlRef.current = null;
+    }
+    serverAudioQueueRef.current.forEach((item) => URL.revokeObjectURL(item.url));
+    serverAudioQueueRef.current = [];
+    browserSpeechQueueRef.current = [];
+    isServerAudioPlayingRef.current = false;
+    isBrowserSpeechPlayingRef.current = false;
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    setIsAssistantSpeaking(false);
+  }, []);
+
+  const handleVoiceWsEvent = useCallback(
+    (event: VoiceWsEvent) => {
+      switch (event.type) {
+        case "ready":
+          if ((event.turn_id ?? 0) === 0) {
+            wsReadyRef.current = true;
+            return;
+          }
+          resetVoiceTurnState();
+          isVoiceLoadingRef.current = false;
+          setIsVoiceLoading(false);
+          return;
+        case "processing":
+          resetVoiceTurnState(event.turn_id ?? null);
+          isVoiceLoadingRef.current = true;
+          setIsVoiceLoading(true);
+          return;
+        case "transcript":
+          ensureUserTranscriptMessage(event.text ?? "");
+          return;
+        case "text_chunk":
+          appendAssistantDelta(event.text ?? "");
+          return;
+        case "text_sentence":
+          if (voiceOutputModeRef.current === "browser") {
+            enqueueBrowserSpeechSentence(event.text ?? "");
+          }
+          return;
+        case "audio_chunk":
+          if (voiceOutputModeRef.current === "server" && event.data) {
+            enqueueServerAudioChunk(event.index ?? 0, event.data);
+          }
+          return;
+        case "done":
+          if (event.full_text) {
+            upsertAssistantMessage(event.full_text);
+          }
+          return;
+        case "interrupted":
+          isVoiceLoadingRef.current = false;
+          setIsVoiceLoading(false);
+          return;
+        case "error":
+          isVoiceLoadingRef.current = false;
+          setIsVoiceLoading(false);
+          if (voiceOutputModeRef.current === "server" && (event.message || "").startsWith("TTS")) {
+            stopVoiceOutput();
+            voiceOutputModeRef.current = "browser";
+            toast.error(
+              event.message ||
+                "La synthèse vocale serveur a échoué. Bascule navigateur."
+            );
+            return;
+          }
+          toast.error(event.message || "La session vocale a rencontré une erreur.");
+          return;
+        default:
+          return;
+      }
+    },
+    [
+      appendAssistantDelta,
+      enqueueBrowserSpeechSentence,
+      enqueueServerAudioChunk,
+      ensureUserTranscriptMessage,
+      resetVoiceTurnState,
+      stopVoiceOutput,
+      upsertAssistantMessage,
+    ]
+  );
+
+  const closeVoiceSocket = useCallback(() => {
+    wsReadyRef.current = false;
+    if (wsRef.current) {
+      wsClosingRef.current = true;
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+  }, []);
+
+  const openVoiceSocket = useCallback(
+    async (selectedVoice: VoiceSample | undefined, audioFormat: string) => {
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/chat/voice/session`,
+        {
+          method: "POST",
+        }
+      );
+      if (!response.ok) {
+        throw new Error("Initialisation de la session vocale impossible.");
+      }
+
+      const session = (await response.json()) as VoiceWsSession;
+      if (!session.wsUrl) {
+        throw new Error("URL WebSocket manquante.");
+      }
+
+      voiceOutputModeRef.current = selectedVoiceId === "browser" ? "browser" : "server";
+
+      await new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(session.wsUrl);
+        let settled = false;
+        const timeout = window.setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            ws.close();
+            reject(new Error("Timeout d'initialisation de la session vocale."));
+          }
+        }, 15000);
+
+        ws.onopen = () => {
+          ws.send(
+            JSON.stringify({
+              type: "init",
+              session_id: chatId,
+              user_name: "Web User",
+              channel: "web",
+              audio_format: audioFormat,
+              voice_mode: selectedVoiceId === "browser" ? "browser" : "sample",
+              voice_url: selectedVoice?.url,
+              voice_id: selectedVoice?.id,
+              voice_reference_text: selectedVoice?.reference_text ?? "",
+            })
+          );
+        };
+
+        ws.onmessage = (message) => {
+          try {
+            const event = JSON.parse(String(message.data)) as VoiceWsEvent;
+            handleVoiceWsEvent(event);
+            if (!settled && event.type === "ready" && (event.turn_id ?? 0) === 0) {
+              settled = true;
+              wsRef.current = ws;
+              wsReadyRef.current = true;
+              window.clearTimeout(timeout);
+              resolve();
+            }
+          } catch (error) {
+            if (!settled) {
+              settled = true;
+              window.clearTimeout(timeout);
+              reject(error);
+            }
+          }
+        };
+
+        ws.onerror = () => {
+          if (!settled) {
+            settled = true;
+            window.clearTimeout(timeout);
+            reject(new Error("Erreur WebSocket"));
+          }
+        };
+
+        ws.onclose = () => {
+          window.clearTimeout(timeout);
+          wsReadyRef.current = false;
+          wsRef.current = null;
+          if (wsClosingRef.current) {
+            wsClosingRef.current = false;
+            return;
+          }
+          if (!settled) {
+            settled = true;
+            reject(new Error("Session WebSocket fermée"));
+            return;
+          }
+
+          toast.error("La session vocale a été interrompue.");
+          isVoiceLoadingRef.current = false;
+          isRecordingVoiceRef.current = false;
+          setIsVoiceLoading(false);
+          setIsRecordingVoice(false);
+          setIsVoiceSessionActive(false);
+          mediaRecorderRef.current = null;
+          mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+          mediaStreamRef.current = null;
+          if (silenceTimeoutRef.current) {
+            window.clearTimeout(silenceTimeoutRef.current);
+            silenceTimeoutRef.current = null;
+          }
+          if (animationFrameRef.current) {
+            window.cancelAnimationFrame(animationFrameRef.current);
+            animationFrameRef.current = null;
+          }
+          if (audioContextRef.current) {
+            void audioContextRef.current.close();
+            audioContextRef.current = null;
+          }
+          stopVoiceOutput();
+          resetVoiceTurnState();
+        };
+      });
+    },
+    [chatId, handleVoiceWsEvent, resetVoiceTurnState, selectedVoiceId, stopVoiceOutput]
+  );
+
   const sendVoiceBlob = useCallback(
     async (blob: Blob) => {
       setIsVoiceLoading(true);
@@ -377,148 +832,22 @@ function PureMultimodalInput({
           `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/chat/${chatId}`
         );
 
-        const extension = blob.type.includes("ogg")
-          ? "ogg"
-          : blob.type.includes("mp4")
-            ? "m4a"
-            : "webm";
-
-        const audioFile = new File([blob], `voice-message.${extension}`, {
-          type: blob.type || "audio/webm",
-        });
-
-        const formData = new FormData();
-        formData.append("audio", audioFile);
-        formData.append("session_id", chatId);
-        formData.append("channel", "web");
-        formData.append("user_name", "Web User");
-
-        const selectedVoice = voices.find((v) => v.id === selectedVoiceId);
-        if (selectedVoiceId === "browser") {
-          formData.append("voice_mode", "browser");
-        } else if (selectedVoice) {
-          formData.append("voice_mode", "sample");
-          formData.append("voice_url", selectedVoice.url);
-          formData.append("voice_id", selectedVoice.id);
-          formData.append("voice_reference_text", selectedVoice.reference_text);
+        const ws = wsRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN || !wsReadyRef.current) {
+          throw new Error("La session vocale n'est pas prête.");
         }
 
-        const response = await fetch(
-          `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/chat/voice`,
-          {
-            method: "POST",
-            body: formData,
-          }
-        );
-
-        if (!response.ok) {
-          toast.error("La requete vocale a echoue.");
-          return;
-        }
-
-        const transcriptionRaw = response.headers.get("X-Transcription");
-        const transcription = transcriptionRaw ? decodeURIComponent(transcriptionRaw) : null;
-        const assistantTextHeader = response.headers.get("X-Assistant-Text");
-        const assistantText = assistantTextHeader
-          ? decodeURIComponent(assistantTextHeader)
-          : "";
-
-        if (transcription) {
-          setMessages((current) => [
-            ...current,
-            {
-              id: crypto.randomUUID(),
-              role: "user",
-              parts: [{ type: "text", text: transcription }],
-            },
-            ...(assistantText
-              ? [
-                  {
-                    id: crypto.randomUUID(),
-                    role: "assistant" as const,
-                    parts: [{ type: "text" as const, text: assistantText }],
-                  },
-                ]
-              : []),
-          ]);
-        }
-
-        const contentType = response.headers.get("Content-Type") ?? "";
-        const ttsStatus = response.headers.get("X-Tts-Status") ?? "";
-        const ttsFallback = response.headers.get("X-Tts-Fallback") ?? "";
-        const ttsProvider = response.headers.get("X-Debug-Tts-Provider") ?? "";
-        const ttsErrorHeader = response.headers.get("X-Debug-Tts-Error") ?? "";
-
-        if (contentType.includes("application/json")) {
-          const data = (await response.json()) as {
-            text?: string;
-            tts?: {
-              status?: string;
-              provider?: string;
-              error?: string;
-              fallback?: string;
-            };
-          };
-          const ttsStatusBody = data.tts?.status ?? "";
-          const ttsProviderBody = data.tts?.provider ?? "";
-          const ttsErrorBody = data.tts?.error ?? "";
-          const shouldWarnTtsFailure =
-            selectedVoiceId !== "browser" &&
-            (ttsStatus === "error" || ttsStatusBody === "error");
-
-          if (shouldWarnTtsFailure) {
-            toast.error(
-              ttsErrorHeader ||
-                ttsErrorBody ||
-                `La synthèse vocale serveur a échoué${ttsProvider || ttsProviderBody ? ` (${ttsProvider || ttsProviderBody})` : ""}. Bascule navigateur.`
-            );
-          }
-
-          // Mode SpeechSynthesis (navigateur) : selection explicite navigateur
-          // ou fallback navigateur annonce par le backend.
-          const textToSpeak = data.text ?? assistantText;
-          if (textToSpeak && typeof window !== "undefined" && window.speechSynthesis) {
-            window.speechSynthesis.cancel();
-            const utterance = new SpeechSynthesisUtterance(textToSpeak);
-            utterance.lang = "fr-FR";
-            utterance.rate = 1.0;
-            utterance.onstart = () => setIsAssistantSpeaking(true);
-            utterance.onend = () => setIsAssistantSpeaking(false);
-            utterance.onerror = () => setIsAssistantSpeaking(false);
-            window.speechSynthesis.speak(utterance);
-          }
-        } else {
-          // Mode audio serveur (HuggingFace/F5-TTS ou provider configure)
-          const audioBlob = await response.blob();
-          const audioUrl = URL.createObjectURL(audioBlob);
-          activeAudioRef.current?.pause();
-          activeAudioRef.current = new Audio(audioUrl);
-          const audio = activeAudioRef.current;
-          audio.onplay = () => setIsAssistantSpeaking(true);
-          audio.onended = () => setIsAssistantSpeaking(false);
-          audio.onpause = () => setIsAssistantSpeaking(false);
-          void audio.play();
-        }
-      } catch (_error) {
-        toast.error("Impossible de traiter le message vocal.");
-      } finally {
+        const payload = await blob.arrayBuffer();
+        ws.send(payload);
+        ws.send(JSON.stringify({ type: "commit" }));
+      } catch (error) {
         isVoiceLoadingRef.current = false;
         setIsVoiceLoading(false);
+        toast.error(error instanceof Error ? error.message : "Impossible de traiter le message vocal.");
       }
     },
-    [chatId, setMessages, voices, selectedVoiceId]
+    [chatId]
   );
-
-  const stopVoiceOutput = useCallback(() => {
-    activeAudioRef.current?.pause();
-    if (activeAudioRef.current) {
-      activeAudioRef.current.currentTime = 0;
-    }
-    if (typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-    }
-    setIsAssistantSpeaking(false);
-  }, []);
 
   const stopTurnRecording = useCallback(() => {
     if (mediaRecorderRef.current?.state === "recording") {
@@ -548,14 +877,16 @@ function PureMultimodalInput({
     mediaRecorderRef.current = null;
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     mediaStreamRef.current = null;
+    closeVoiceSocket();
     stopVoiceOutput();
+    resetVoiceTurnState();
     isRecordingVoiceRef.current = false;
     isVoiceLoadingRef.current = false;
     setIsRecordingVoice(false);
     setIsVoiceLoading(false);
     setIsVoiceSessionActive(false);
     hasDetectedSpeechRef.current = false;
-  }, [stopVoiceOutput]);
+  }, [closeVoiceSocket, resetVoiceTurnState, stopVoiceOutput]);
 
   const startTurnRecording = useCallback(() => {
     const stream = mediaStreamRef.current;
@@ -568,14 +899,9 @@ function PureMultimodalInput({
     }
 
     voiceChunksRef.current = [];
-
-    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus"
-      : MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")
-        ? "audio/ogg;codecs=opus"
-        : "audio/webm";
-
-    const recorder = new MediaRecorder(stream, { mimeType });
+    const recorder = new MediaRecorder(stream, {
+      mimeType: recorderMimeTypeRef.current,
+    });
     mediaRecorderRef.current = recorder;
 
     recorder.ondataavailable = (event) => {
@@ -633,6 +959,11 @@ function PureMultimodalInput({
     }
 
     try {
+      const selectedVoice = voices.find((voice) => voice.id === selectedVoiceId);
+      const recorderMimeType = getPreferredRecorderMimeType();
+      recorderMimeTypeRef.current = recorderMimeType;
+      await openVoiceSocket(selectedVoice, recorderMimeType);
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaStreamRef.current = stream;
       hasDetectedSpeechRef.current = false;
@@ -687,10 +1018,23 @@ function PureMultimodalInput({
       };
 
       animationFrameRef.current = window.requestAnimationFrame(monitorSilence);
-    } catch (_error) {
-      toast.error("Autorisation micro refusee ou indisponible.");
+    } catch (error) {
+      closeVoiceSocket();
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Autorisation micro refusee ou indisponible."
+      );
     }
-  }, [startTurnRecording, stopTurnRecording, stopVoiceOutput]);
+  }, [
+    closeVoiceSocket,
+    openVoiceSocket,
+    selectedVoiceId,
+    startTurnRecording,
+    stopTurnRecording,
+    stopVoiceOutput,
+    voices,
+  ]);
 
   useEffect(() => {
     return () => {
