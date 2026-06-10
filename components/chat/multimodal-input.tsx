@@ -266,7 +266,7 @@ function PureMultimodalInput({
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [isVoiceSessionActive, setIsVoiceSessionActive] = useState(false);
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
-  const { data: voices = [] } = useSWR<VoiceSample[]>(
+  const { data: voices = [], isLoading: isVoicesLoading } = useSWR<VoiceSample[]>(
     interactionMode === "voice"
       ? `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/voices`
       : null,
@@ -290,6 +290,12 @@ function PureMultimodalInput({
       setSelectedVoiceId(voices[0].id);
     }
   }, [interactionMode, selectedVoiceId, setSelectedVoiceId, voices]);
+
+  const selectedVoice = voices.find((voice) => voice.id === selectedVoiceId);
+  const requiresServerVoice = interactionMode === "voice" && selectedVoiceId !== "browser";
+  const hasResolvedServerVoice = Boolean(
+    selectedVoice?.url && selectedVoice?.id && selectedVoice?.reference_text
+  );
 
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState("");
@@ -959,7 +965,10 @@ function PureMultimodalInput({
     }
 
     try {
-      const selectedVoice = voices.find((voice) => voice.id === selectedVoiceId);
+      if (requiresServerVoice && !selectedVoice) {
+        throw new Error("La voix sélectionnée n'est pas encore chargée.");
+      }
+
       const recorderMimeType = getPreferredRecorderMimeType();
       recorderMimeTypeRef.current = recorderMimeType;
       await openVoiceSocket(selectedVoice, recorderMimeType);
@@ -1029,11 +1038,12 @@ function PureMultimodalInput({
   }, [
     closeVoiceSocket,
     openVoiceSocket,
+    requiresServerVoice,
+    selectedVoice,
     selectedVoiceId,
     startTurnRecording,
     stopTurnRecording,
     stopVoiceOutput,
-    voices,
   ]);
 
   useEffect(() => {
@@ -1044,6 +1054,10 @@ function PureMultimodalInput({
 
   const voiceStatusLabel = isVoiceLoading
     ? "Analyse et reponse en cours..."
+    : isVoicesLoading
+      ? "Chargement des voix..."
+      : requiresServerVoice && !hasResolvedServerVoice
+        ? "La voix clonée sélectionnée n'est pas encore prête."
     : isAssistantSpeaking
       ? "Je parle. Si tu reparles, je m'arrete et je t'ecoute."
       : isRecordingVoice
@@ -1054,6 +1068,10 @@ function PureMultimodalInput({
 
   const voiceStatusShort = isVoiceLoading
     ? "Thinking"
+    : isVoicesLoading
+      ? "Loading"
+      : requiresServerVoice && !hasResolvedServerVoice
+        ? "Voice"
     : isAssistantSpeaking
       ? "Speaking"
       : isRecordingVoice
@@ -1421,7 +1439,11 @@ function PureMultimodalInput({
                     !isAssistantSpeaking &&
                     "bg-white/6 border border-white/10 cursor-default"
                 )}
-                disabled={isVoiceSessionActive}
+                disabled={
+                  isVoiceSessionActive ||
+                  isVoicesLoading ||
+                  (requiresServerVoice && !hasResolvedServerVoice)
+                }
                 onClick={() => {
                   if (!isVoiceSessionActive) {
                     void startVoiceSession();
