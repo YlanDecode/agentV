@@ -45,6 +45,15 @@ function splitTextForTts(text: string, maxChars: number) {
   return parts.length > 0 ? parts : [text.trim()];
 }
 
+function normalizeFrenchTextForTts(text: string) {
+  return text
+    .replace(/\s+/g, " ")
+    .replace(/\s+([!?:;])/g, "$1")
+    .replace(/([!?:;])(\S)/g, "$1 $2")
+    .replace(/([,.])(\S)/g, "$1 $2")
+    .trim();
+}
+
 type WavInfo = {
   audioFormat: number;
   numChannels: number;
@@ -243,6 +252,9 @@ async function generateSpeechSegment(params: {
     meta: { _type: "gradio.FileData" };
   };
   text: string;
+  inferTimestep: number;
+  intelligibilityWeight: number;
+  similarityWeight: number;
 }) {
   const submitRes = await fetch(
     `${params.apiUrl}/gradio_api/call/${params.fnName}${params.tokenQuery}`,
@@ -250,7 +262,13 @@ async function generateSpeechSegment(params: {
       method: "POST",
       headers: { "Content-Type": "application/json", ...params.authHeaders },
       body: JSON.stringify({
-        data: [params.gradioFile, params.text, 32, 1.4, 3.0],
+        data: [
+          params.gradioFile,
+          params.text,
+          params.inferTimestep,
+          params.intelligibilityWeight,
+          params.similarityWeight,
+        ],
       }),
       cache: "no-store",
     }
@@ -287,9 +305,12 @@ async function generateSpeechSegment(params: {
  *   F5TTS_REFERENCE_AUDIO_URL  URL publique du fichier WAV de référence (voix par défaut)
  * Variables d'env optionnelles :
  *   F5TTS_REFERENCE_TEXT       Transcription exacte de l'audio de référence par défaut
+ *   F5TTS_INFER_TIMESTEP       Nombre d'etapes d'inference (defaut: 32)
+ *   F5TTS_INTELLIGIBILITY_WEIGHT  Priorite a l'intelligibilite (defaut: 1.8)
+ *   F5TTS_SIMILARITY_WEIGHT    Priorite a la similarite vocale (defaut: 2.2)
  *
  * Les options refAudioUrl / refText permettent de passer une voix choisie par l'utilisateur
- * (prioritaire sur les variables d'env).
+ * (prioritaire sur les variables d'env). Ce Space ignore actuellement refText.
  */
 export async function f5ttsTextToSpeech(
   text: string,
@@ -311,6 +332,11 @@ export async function f5ttsTextToSpeech(
 
   const fnName = process.env.F5TTS_FN_NAME ?? "basic_tts";
   const maxChars = Number(process.env.F5TTS_MAX_CHARS ?? "400");
+  const inferTimestep = Number(process.env.F5TTS_INFER_TIMESTEP ?? "32");
+  const intelligibilityWeight = Number(
+    process.env.F5TTS_INTELLIGIBILITY_WEIGHT ?? "1.8"
+  );
+  const similarityWeight = Number(process.env.F5TTS_SIMILARITY_WEIGHT ?? "2.2");
 
   const hfToken = process.env.HF_TOKEN;
   const authHeaders: Record<string, string> = hfToken
@@ -360,7 +386,8 @@ export async function f5ttsTextToSpeech(
   }
   const uploadedPaths = (await uploadRes.json()) as string[];
   const uploadedPath = uploadedPaths[0];
-  const textChunks = splitTextForTts(text, maxChars).filter(Boolean);
+  const normalizedText = normalizeFrenchTextForTts(text);
+  const textChunks = splitTextForTts(normalizedText, maxChars).filter(Boolean);
   const audioBuffers: ArrayBuffer[] = [];
   let contentType = "audio/wav";
 
@@ -372,6 +399,9 @@ export async function f5ttsTextToSpeech(
       authHeaders,
       gradioFile: gradioFile(uploadedPath),
       text: chunk,
+      inferTimestep,
+      intelligibilityWeight,
+      similarityWeight,
     });
     contentType = audioRes.headers.get("Content-Type") ?? contentType;
     audioBuffers.push(await audioRes.arrayBuffer());
