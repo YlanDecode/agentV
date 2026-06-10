@@ -307,6 +307,8 @@ function PureMultimodalInput({
   const activeAudioUrlRef = useRef<string | null>(null);
   const isVoiceLoadingRef = useRef(false);
   const isRecordingVoiceRef = useRef(false);
+  const isAssistantSpeakingRef = useRef(false);
+  const assistantSpeechCooldownUntilRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
   const silenceTimeoutRef = useRef<number | null>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -335,6 +337,10 @@ function PureMultimodalInput({
   useEffect(() => {
     isRecordingVoiceRef.current = isRecordingVoice;
   }, [isRecordingVoice]);
+
+  useEffect(() => {
+    isAssistantSpeakingRef.current = isAssistantSpeaking;
+  }, [isAssistantSpeaking]);
 
   const submitForm = useCallback(() => {
     window.history.pushState(
@@ -543,7 +549,10 @@ function PureMultimodalInput({
       playNextServerAudio();
     };
 
-    audio.onplay = () => setIsAssistantSpeaking(true);
+    audio.onplay = () => {
+      assistantSpeechCooldownUntilRef.current = Date.now() + 1200;
+      setIsAssistantSpeaking(true);
+    };
     audio.onended = finalize;
     audio.onerror = finalize;
     audio.onpause = () => {
@@ -582,7 +591,10 @@ function PureMultimodalInput({
     const utterance = new SpeechSynthesisUtterance(nextSentence);
     utterance.lang = "fr-FR";
     utterance.rate = 1.0;
-    utterance.onstart = () => setIsAssistantSpeaking(true);
+    utterance.onstart = () => {
+      assistantSpeechCooldownUntilRef.current = Date.now() + 1200;
+      setIsAssistantSpeaking(true);
+    };
     utterance.onend = () => {
       isBrowserSpeechPlayingRef.current = false;
       setIsAssistantSpeaking(false);
@@ -625,6 +637,7 @@ function PureMultimodalInput({
     if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
+    assistantSpeechCooldownUntilRef.current = Date.now() + 1200;
     setIsAssistantSpeaking(false);
   }, []);
 
@@ -973,7 +986,13 @@ function PureMultimodalInput({
       recorderMimeTypeRef.current = recorderMimeType;
       await openVoiceSocket(selectedVoice, recorderMimeType);
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       mediaStreamRef.current = stream;
       hasDetectedSpeechRef.current = false;
       setIsVoiceSessionActive(true);
@@ -987,6 +1006,21 @@ function PureMultimodalInput({
       const dataArray = new Uint8Array(analyser.fftSize);
 
       const monitorSilence = () => {
+        if (
+          isAssistantSpeakingRef.current ||
+          Date.now() < assistantSpeechCooldownUntilRef.current
+        ) {
+          if (silenceTimeoutRef.current) {
+            window.clearTimeout(silenceTimeoutRef.current);
+            silenceTimeoutRef.current = null;
+          }
+          if (mediaStreamRef.current) {
+            animationFrameRef.current =
+              window.requestAnimationFrame(monitorSilence);
+          }
+          return;
+        }
+
         analyser.getByteTimeDomainData(dataArray);
 
         let sum = 0;
@@ -1000,10 +1034,6 @@ function PureMultimodalInput({
 
         if (isSpeaking) {
           hasDetectedSpeechRef.current = true;
-
-          if (activeAudioRef.current && !activeAudioRef.current.paused) {
-            stopVoiceOutput();
-          }
 
           if (silenceTimeoutRef.current) {
             window.clearTimeout(silenceTimeoutRef.current);
