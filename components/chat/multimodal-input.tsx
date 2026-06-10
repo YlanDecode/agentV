@@ -532,6 +532,7 @@ function PureMultimodalInput({
     }
 
     const audio = new Audio(nextItem.url);
+    audio.volume = 1;
     activeAudioRef.current = audio;
     activeAudioUrlRef.current = nextItem.url;
     isServerAudioPlayingRef.current = true;
