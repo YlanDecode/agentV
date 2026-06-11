@@ -17,6 +17,10 @@ type PersonaForm = {
   cloneVoiceSystemPrompt: string;
   groqChatModel: string;
   groqTranscriptionModel: string;
+  ttsProvider: string;
+  fishReferenceId: string;
+  fishTtsModel: string;
+  fishTtsLatency: string;
   elevenLabsVoiceId: string;
   elevenLabsModelId: string;
 };
@@ -57,6 +61,10 @@ const emptyPersona: PersonaForm = {
   cloneVoiceSystemPrompt: "",
   groqChatModel: "",
   groqTranscriptionModel: "",
+  ttsProvider: "auto",
+  fishReferenceId: "",
+  fishTtsModel: "s2-pro",
+  fishTtsLatency: "balanced",
   elevenLabsVoiceId: "",
   elevenLabsModelId: "",
 };
@@ -215,6 +223,31 @@ export default function SettingsPage() {
                     label="Ancien model ID ElevenLabs (ignore par F5-TTS)"
                     value={persona.elevenLabsModelId}
                     onChange={(value) => update("elevenLabsModelId", value)}
+                  />
+                </div>
+              </Section>
+
+              <Section title="TTS Runtime">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field
+                    label="TTS provider"
+                    value={persona.ttsProvider}
+                    onChange={(value) => update("ttsProvider", value)}
+                  />
+                  <Field
+                    label="Fish reference ID par defaut"
+                    value={persona.fishReferenceId}
+                    onChange={(value) => update("fishReferenceId", value)}
+                  />
+                  <Field
+                    label="Fish model"
+                    value={persona.fishTtsModel}
+                    onChange={(value) => update("fishTtsModel", value)}
+                  />
+                  <Field
+                    label="Fish latency"
+                    value={persona.fishTtsLatency}
+                    onChange={(value) => update("fishTtsLatency", value)}
                   />
                 </div>
               </Section>

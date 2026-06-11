@@ -11,6 +11,10 @@ type PersonaConfigRow = {
   clone_voice_system_prompt: string | null;
   groq_chat_model: string | null;
   groq_transcription_model: string | null;
+  tts_provider: string | null;
+  fish_reference_id: string | null;
+  fish_tts_model: string | null;
+  fish_tts_latency: string | null;
   elevenlabs_voice_id: string | null;
   elevenlabs_model_id: string | null;
   updated_at: string | null;
@@ -50,6 +54,10 @@ export type CloneSettings = {
   cloneVoiceSystemPrompt: string;
   groqChatModel: string;
   groqTranscriptionModel: string;
+  ttsProvider: string;
+  fishReferenceId: string;
+  fishTtsModel: string;
+  fishTtsLatency: string;
   elevenLabsVoiceId: string;
   elevenLabsModelId: string;
 };
@@ -82,6 +90,10 @@ const defaultCloneSettings: CloneSettings = {
   groqChatModel: process.env.GROQ_CHAT_MODEL ?? "llama-3.3-70b-versatile",
   groqTranscriptionModel:
     process.env.GROQ_TRANSCRIPTION_MODEL ?? "whisper-large-v3",
+  ttsProvider: process.env.TTS_PROVIDER ?? "auto",
+  fishReferenceId: process.env.FISH_REFERENCE_ID ?? "",
+  fishTtsModel: process.env.FISH_TTS_MODEL ?? "s2-pro",
+  fishTtsLatency: process.env.FISH_TTS_LATENCY ?? "balanced",
   elevenLabsVoiceId: process.env.ELEVENLABS_VOICE_ID ?? "pqHfZKP75CvOlQylNhV4",
   elevenLabsModelId:
     process.env.ELEVENLABS_MODEL_ID ?? "eleven_multilingual_v2",
@@ -152,6 +164,12 @@ function mapPersona(row?: PersonaConfigRow | null): PersonaForm {
     groqTranscriptionModel:
       row?.groq_transcription_model ??
       defaultPersonaForm.groqTranscriptionModel,
+    ttsProvider: row?.tts_provider ?? defaultPersonaForm.ttsProvider,
+    fishReferenceId:
+      row?.fish_reference_id ?? defaultPersonaForm.fishReferenceId,
+    fishTtsModel: row?.fish_tts_model ?? defaultPersonaForm.fishTtsModel,
+    fishTtsLatency:
+      row?.fish_tts_latency ?? defaultPersonaForm.fishTtsLatency,
     elevenLabsVoiceId:
       row?.elevenlabs_voice_id ?? defaultPersonaForm.elevenLabsVoiceId,
     elevenLabsModelId:
@@ -203,6 +221,10 @@ export async function getCloneSettings(): Promise<CloneSettings> {
     cloneVoiceSystemPrompt: persona.cloneVoiceSystemPrompt,
     groqChatModel: persona.groqChatModel,
     groqTranscriptionModel: persona.groqTranscriptionModel,
+    ttsProvider: persona.ttsProvider,
+    fishReferenceId: persona.fishReferenceId,
+    fishTtsModel: persona.fishTtsModel,
+    fishTtsLatency: persona.fishTtsLatency,
     elevenLabsVoiceId: persona.elevenLabsVoiceId,
     elevenLabsModelId: persona.elevenLabsModelId,
   };
@@ -221,6 +243,10 @@ export async function savePOCConfig(persona: PersonaForm) {
     clone_voice_system_prompt: persona.cloneVoiceSystemPrompt,
     groq_chat_model: persona.groqChatModel,
     groq_transcription_model: persona.groqTranscriptionModel,
+    tts_provider: persona.ttsProvider,
+    fish_reference_id: persona.fishReferenceId,
+    fish_tts_model: persona.fishTtsModel,
+    fish_tts_latency: persona.fishTtsLatency,
     elevenlabs_voice_id: persona.elevenLabsVoiceId,
     elevenlabs_model_id: persona.elevenLabsModelId,
     updated_at: new Date().toISOString(),
