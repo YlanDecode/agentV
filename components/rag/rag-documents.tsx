@@ -19,7 +19,7 @@ type CreateForm = {
 };
 
 const EMPTY_FORM: CreateForm = { title: "", content: "", source_format: "txt" };
-const FORMAT_OPTIONS = ["txt", "md", "pdf", "docx", "csv", "html"];
+const FORMAT_OPTIONS = ["txt", "md", "csv"];
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("fr-FR", {
@@ -99,7 +99,7 @@ export function RagDocuments() {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("title", file.name.replace(/\.[^.]+$/, ""));
-      const res = await fetch("/api/rag", { method: "POST", body: formData });
+      const res = await fetch("/api/rag/upload", { method: "POST", body: formData });
       if (!res.ok) {
         const err = (await res.json()) as { detail?: string };
         throw new Error(err.detail ?? "Erreur d'upload");
@@ -148,7 +148,7 @@ export function RagDocuments() {
         </div>
 
         <input
-          accept=".txt,.md,.markdown,.pdf,.docx,.csv,.html"
+          accept=".txt,.md,.markdown,.csv,text/plain,text/markdown,text/csv"
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0];

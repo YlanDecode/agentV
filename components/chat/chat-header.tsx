@@ -52,7 +52,7 @@ function PureChatHeader({
         className="hidden rounded-lg border border-border/40 px-4 md:ml-auto md:flex"
         variant="ghost"
       >
-        <Link href="/settings">POC Config</Link>
+        <Link href="/admin/persona">POC Config</Link>
       </Button>
 
       <div className="hidden items-center gap-2 md:flex">
