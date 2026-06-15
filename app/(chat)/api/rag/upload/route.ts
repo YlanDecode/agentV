@@ -21,6 +21,9 @@ export async function POST(request: Request) {
       headers: { "Content-Type": response.headers.get("Content-Type") ?? "application/json" },
     });
   } catch {
-    return Response.json({ error: "RAG file upload failed" }, { status: 502 });
+    return Response.json(
+      { error: 'Impossible d’importer ce fichier dans le service RAG.' },
+      { status: 502 }
+    );
   }
 }

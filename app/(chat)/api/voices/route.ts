@@ -2,18 +2,29 @@ import { agentVocalFetch, isAgentVocalEnabled } from "@/lib/backend/agentvocal";
 
 export async function GET() {
   if (!isAgentVocalEnabled()) {
-    return Response.json([]);
+    return Response.json(
+      {
+        error:
+          'AGENTVOCAL_API_BASE_URL et AGENTVOCAL_API_KEY doivent être configurés pour charger les voix.',
+      },
+      { status: 400 }
+    );
   }
 
   try {
     const response = await agentVocalFetch("/api/voices");
-    if (!response.ok) {
-      return Response.json([]);
-    }
-
-    return Response.json(await response.json());
+    const payload = await response.text();
+    return new Response(payload, {
+      status: response.status,
+      headers: {
+        "Content-Type": response.headers.get("Content-Type") ?? "application/json",
+      },
+    });
   } catch {
-    return Response.json([]);
+    return Response.json(
+      { error: 'Impossible de charger les voix depuis le backend AgentVOCAL.' },
+      { status: 502 }
+    );
   }
 }
 
@@ -49,6 +60,9 @@ export async function POST(request: Request) {
       },
     });
   } catch {
-    return Response.json({ error: "Voice upload failed" }, { status: 502 });
+    return Response.json(
+      { error: 'Impossible de téléverser cet échantillon vocal vers AgentVOCAL.' },
+      { status: 502 }
+    );
   }
 }

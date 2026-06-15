@@ -22,11 +22,20 @@ export async function DELETE(
     });
 
     if (!response.ok) {
-      return Response.json({ error: "Voice deletion failed" }, { status: response.status });
+      const body = await response.text();
+      return new Response(body, {
+        status: response.status,
+        headers: {
+          "Content-Type": response.headers.get("Content-Type") ?? "application/json",
+        },
+      });
     }
 
     return Response.json({ ok: true });
   } catch {
-    return Response.json({ error: "Voice deletion failed" }, { status: 502 });
+    return Response.json(
+      { error: 'Impossible de supprimer cette voix côté AgentVOCAL.' },
+      { status: 502 }
+    );
   }
 }

@@ -2,6 +2,12 @@
 
 import { ShieldCheckIcon, ShieldOffIcon, ShieldIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  fetchVoiceConsent,
+  grantVoiceConsent,
+  revokeVoiceConsent,
+} from '@/lib/agentvocal-admin-api';
+import { ApiClientError, getApiErrorMessage } from '@/lib/axios';
 
 type ConsentStatus =
   | { state: "loading" }
@@ -24,22 +30,17 @@ export function ConsentButton({ voiceId, voiceName }: ConsentButtonProps) {
 
   const fetchConsent = useCallback(async () => {
     setStatus({ state: "loading" });
+    setMessage("");
     try {
-      const res = await fetch(`/api/voices/${voiceId}/consent`, { cache: "no-store" });
-      if (res.status === 404) {
+      const data = await fetchVoiceConsent(voiceId);
+      setStatus({ state: "active", ...data });
+    } catch (error) {
+      if (error instanceof ApiClientError && error.status === 404) {
         setStatus({ state: "none" });
-      } else if (res.ok) {
-        const data = (await res.json()) as {
-          consented_by: string;
-          purpose: string;
-          created_at: string;
-        };
-        setStatus({ state: "active", ...data });
       } else {
         setStatus({ state: "error" });
+        setMessage(getApiErrorMessage(error, 'Impossible de charger le statut de consentement.'));
       }
-    } catch {
-      setStatus({ state: "error" });
     }
   }, [voiceId]);
 
@@ -64,24 +65,15 @@ export function ConsentButton({ voiceId, voiceName }: ConsentButtonProps) {
     setSaving(true);
     setMessage("");
     try {
-      const res = await fetch(`/api/voices/${voiceId}/consent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          consented_by: consentedBy.trim(),
-          purpose: "voice_cloning",
-        }),
+      await grantVoiceConsent(voiceId, {
+        consented_by: consentedBy.trim(),
+        purpose: 'voice_cloning',
       });
-      if (res.ok) {
-        setMessage("Consentement accordé.");
-        setConsentedBy("");
-        await fetchConsent();
-      } else {
-        const data = (await res.json()) as { detail?: string };
-        setMessage(data.detail ?? "Erreur lors de l'accord du consentement.");
-      }
-    } catch {
-      setMessage("Erreur réseau.");
+      setMessage("Consentement accordé.");
+      setConsentedBy("");
+      await fetchConsent();
+    } catch (error) {
+      setMessage(getApiErrorMessage(error, 'Impossible d’accorder le consentement.'));
     } finally {
       setSaving(false);
     }
@@ -91,15 +83,11 @@ export function ConsentButton({ voiceId, voiceName }: ConsentButtonProps) {
     setSaving(true);
     setMessage("");
     try {
-      const res = await fetch(`/api/voices/${voiceId}/consent`, { method: "DELETE" });
-      if (res.ok) {
-        setMessage("Consentement révoqué.");
-        await fetchConsent();
-      } else {
-        setMessage("Erreur lors de la révocation.");
-      }
-    } catch {
-      setMessage("Erreur réseau.");
+      await revokeVoiceConsent(voiceId);
+      setMessage("Consentement révoqué.");
+      await fetchConsent();
+    } catch (error) {
+      setMessage(getApiErrorMessage(error, 'Impossible de révoquer le consentement.'));
     } finally {
       setSaving(false);
     }
@@ -142,7 +130,7 @@ export function ConsentButton({ voiceId, voiceName }: ConsentButtonProps) {
           )}
 
           {status.state === "error" && (
-            <p className="text-xs text-red-500">Impossible de charger le statut.</p>
+            <p className="text-xs text-red-500">{message || 'Impossible de charger le statut.'}</p>
           )}
 
           {status.state === "active" && (

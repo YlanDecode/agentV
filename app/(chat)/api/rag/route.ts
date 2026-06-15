@@ -6,13 +6,25 @@ const NOT_CONFIGURED = Response.json(
 );
 
 export async function GET() {
-  if (!isAgentVocalEnabled()) return Response.json({ items: [] });
+  if (!isAgentVocalEnabled()) {
+    return Response.json(
+      { error: 'AGENTVOCAL_API_BASE_URL and AGENTVOCAL_API_KEY must be configured' },
+      { status: 400 }
+    );
+  }
+
   try {
     const response = await agentVocalFetch("/rag/documents");
-    if (!response.ok) return Response.json({ items: [] });
-    return Response.json(await response.json());
+    const body = await response.text();
+    return new Response(body, {
+      status: response.status,
+      headers: { "Content-Type": response.headers.get("Content-Type") ?? "application/json" },
+    });
   } catch {
-    return Response.json({ items: [] });
+    return Response.json(
+      { error: 'Impossible de charger les documents RAG depuis le backend AgentVOCAL.' },
+      { status: 502 }
+    );
   }
 }
 
@@ -38,6 +50,9 @@ export async function POST(request: Request) {
       headers: { "Content-Type": response.headers.get("Content-Type") ?? "application/json" },
     });
   } catch {
-    return Response.json({ error: "RAG document creation failed" }, { status: 502 });
+    return Response.json(
+      { error: 'Impossible de créer le document RAG côté backend AgentVOCAL.' },
+      { status: 502 }
+    );
   }
 }

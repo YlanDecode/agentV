@@ -44,6 +44,7 @@ import {
   DEFAULT_CHAT_MODEL,
   type ModelCapabilities,
 } from "@/lib/ai/models";
+import { listVoices } from '@/lib/agentvocal-admin-api';
 import type { VoiceSample } from "@/lib/supabase/voices";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -267,10 +268,14 @@ function PureMultimodalInput({
   const [isVoiceSessionActive, setIsVoiceSessionActive] = useState(false);
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
   const { data: voices = [], isLoading: isVoicesLoading } = useSWR<VoiceSample[]>(
-    interactionMode === "voice"
-      ? `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/voices`
-      : null,
-    (url: string) => fetch(url).then((r) => r.json()),
+    interactionMode === "voice" ? 'agentvocal-voices' : null,
+    async () => {
+      try {
+        return await listVoices();
+      } catch {
+        return [];
+      }
+    },
     { revalidateOnFocus: false, dedupingInterval: 60_000 }
   );
   const [selectedVoiceId, setSelectedVoiceId] = useLocalStorage<string>(

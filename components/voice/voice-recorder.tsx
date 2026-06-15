@@ -1,9 +1,17 @@
 "use client";
 
-import { FolderOpenIcon, MicIcon, PlayIcon, SquareIcon, Trash2Icon, UploadIcon } from "lucide-react";
+import { FolderOpenIcon, MicIcon, MoreHorizontalIcon, PlayIcon, SquareIcon, Trash2Icon, UploadIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { deleteVoice as deleteVoiceRequest, listVoices, uploadVoice } from '@/lib/agentvocal-admin-api';
+import { getApiErrorMessage } from '@/lib/axios';
 import type { VoiceSample } from "@/lib/supabase/voices";
 import { ConsentButton } from "@/components/voice/consent-button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 async function blobToWav(blob: Blob): Promise<Blob> {
   const arrayBuffer = await blob.arrayBuffer();
@@ -71,11 +79,10 @@ export function VoiceRecorder() {
   const fetchVoices = useCallback(async () => {
     setLoadingVoices(true);
     try {
-      const res = await fetch("/api/voices", { cache: "no-store" });
-      const data = (await res.json()) as VoiceSample[];
-      setVoices(data);
-    } catch {
+      setVoices(await listVoices());
+    } catch (error) {
       setVoices([]);
+      setUploadStatus(getApiErrorMessage(error, 'Impossible de charger les voix enregistrées.'));
     } finally {
       setLoadingVoices(false);
     }
@@ -156,8 +163,7 @@ export function VoiceRecorder() {
     formData.append("reference_text", refText.trim());
 
     try {
-      const res = await fetch("/api/voices", { method: "POST", body: formData });
-      if (!res.ok) throw new Error("Upload échoué");
+      await uploadVoice(formData);
       setUploadStatus("Voix sauvegardée.");
       setBlob(null);
       if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -166,177 +172,233 @@ export function VoiceRecorder() {
       setRefText("");
       setSeconds(0);
       await fetchVoices();
-    } catch {
-      setUploadStatus("Erreur lors de l'upload.");
+    } catch (error) {
+      setUploadStatus(getApiErrorMessage(error, 'Impossible d’enregistrer cette voix.'));
     } finally {
       setUploading(false);
     }
   }, [blob, name, refText, previewUrl, fetchVoices]);
 
   const deleteVoice = useCallback(async (id: string) => {
-    await fetch(`/api/voices/${id}`, { method: "DELETE" });
-    setVoices((v) => v.filter((x) => x.id !== id));
+    try {
+      await deleteVoiceRequest(id);
+      setVoices((v) => v.filter((x) => x.id !== id));
+      setUploadStatus('Voix supprimée.');
+    } catch (error) {
+      setUploadStatus(getApiErrorMessage(error, 'Impossible de supprimer cette voix.'));
+    }
   }, []);
 
   const fmt = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
   return (
-    <div className="space-y-5">
-      {/* Enregistrement */}
-      <div className="rounded-xl border border-border bg-background p-4 space-y-4">
-        <p className="text-xs font-medium text-muted-foreground">
-          Enregistre au moins 20-30 secondes de voix naturelle pour servir de reference F5-TTS.
-        </p>
-
-        <input
-          accept="audio/*"
-          className="hidden"
-          onChange={onFileChange}
-          ref={fileInputRef}
-          type="file"
-        />
-        <div className="flex items-center gap-3">
-          {!isRecording ? (
-            <button
-              className="flex items-center gap-2 rounded-xl bg-foreground px-4 py-2 text-sm text-background hover:opacity-90 disabled:opacity-50"
-              disabled={isRecording}
-              onClick={() => void startRecording()}
-              type="button"
-            >
-              <MicIcon className="size-4" />
-              {blob ? "Ré-enregistrer" : "Enregistrer"}
-            </button>
-          ) : (
-            <button
-              className="flex items-center gap-2 rounded-xl bg-red-500 px-4 py-2 text-sm text-white hover:bg-red-600"
-              onClick={stopRecording}
-              type="button"
-            >
-              <SquareIcon className="size-4 fill-current" />
-              Arrêter — {fmt(seconds)}
-            </button>
-          )}
-          {!isRecording && (
-            <button
-              className="flex items-center gap-2 rounded-xl border border-border px-4 py-2 text-sm text-foreground hover:bg-muted"
-              onClick={pickFile}
-              type="button"
-            >
-              <FolderOpenIcon className="size-4" />
-              Importer un fichier
-            </button>
-          )}
-
-          {isRecording && (
-            <div className="flex items-end gap-[3px]" style={{ height: 20 }}>
-              {[10, 16, 12, 18, 10].map((h, i) => (
-                <div
-                  key={i}
-                  className="w-[3px] rounded-full bg-foreground animate-bounce"
-                  style={{ height: h, animationDelay: `${i * 90}ms`, animationDuration: "550ms" }}
-                />
-              ))}
+    <div className="space-y-6">
+      <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+        <section className="rounded-3xl border border-border/70 bg-background/80 p-5 md:p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Étape 1
+              </p>
+              <h2 className="mt-2 text-lg font-semibold text-foreground">Capturer ou importer un échantillon</h2>
+              <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                Enregistrez directement une voix ou chargez un fichier audio existant.
+              </p>
             </div>
-          )}
-        </div>
-
-        {previewUrl && (
-          <div className="space-y-3">
-            {/* biome-ignore lint/a11y/useMediaCaption: voice preview */}
-            <audio className="w-full h-10" controls src={previewUrl} />
-
-            <div className="grid gap-3 md:grid-cols-2">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs font-medium text-muted-foreground">
-                  Nom de la voix *
-                </span>
-                <input
-                  className="h-10 rounded-xl border border-border bg-background px-3 text-sm"
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="ex: CEO Martin"
-                  type="text"
-                  value={name}
-                />
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs font-medium text-muted-foreground">
-                  Transcription de référence (optionnel, améliore la qualité)
-                </span>
-                <input
-                  className="h-10 rounded-xl border border-border bg-background px-3 text-sm"
-                  onChange={(e) => setRefText(e.target.value)}
-                  placeholder="ex: Bonjour, je m'appelle Martin..."
-                  type="text"
-                  value={refText}
-                />
-              </label>
+            <div className="rounded-2xl border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
+              cible: 20-30s
             </div>
+          </div>
 
-            <div className="flex items-center gap-3">
+          <input
+            accept="audio/*"
+            className="hidden"
+            onChange={onFileChange}
+            ref={fileInputRef}
+            type="file"
+          />
+
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            {!isRecording ? (
               <button
-                className="flex items-center gap-2 rounded-xl bg-foreground px-4 py-2 text-sm text-background hover:opacity-90 disabled:opacity-50"
+                className="flex items-center gap-2 rounded-2xl bg-foreground px-4 py-2.5 text-sm text-background hover:opacity-90 disabled:opacity-50"
+                disabled={isRecording}
+                onClick={() => void startRecording()}
+                type="button"
+              >
+                <MicIcon className="size-4" />
+                {blob ? "Refaire l'enregistrement" : "Enregistrer une voix"}
+              </button>
+            ) : (
+              <button
+                className="flex items-center gap-2 rounded-2xl bg-red-500 px-4 py-2.5 text-sm text-white hover:bg-red-600"
+                onClick={stopRecording}
+                type="button"
+              >
+                <SquareIcon className="size-4 fill-current" />
+                Arrêter • {fmt(seconds)}
+              </button>
+            )}
+
+            {!isRecording && (
+              <button
+                className="flex items-center gap-2 rounded-2xl border border-border px-4 py-2.5 text-sm text-foreground hover:bg-muted"
+                onClick={pickFile}
+                type="button"
+              >
+                <FolderOpenIcon className="size-4" />
+                Importer un fichier audio
+              </button>
+            )}
+
+            {isRecording && (
+              <div className="flex items-end gap-[3px] rounded-full border border-border bg-muted px-3 py-2" style={{ height: 36 }}>
+                {[10, 16, 12, 18, 10].map((h, i) => (
+                  <div
+                    key={i}
+                    className="w-[3px] rounded-full bg-foreground animate-bounce"
+                    style={{ height: h, animationDelay: `${i * 90}ms`, animationDuration: "550ms" }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="mt-5 rounded-2xl border border-border bg-card/60 p-4 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">Conseil pratique</p>
+            <p className="mt-1 leading-6">
+              Préférez une voix calme, sans bruit de fond, avec une diction naturelle. Une
+              seule bonne prise vaut mieux que plusieurs échantillons moyens.
+            </p>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-border/70 bg-background/80 p-5 md:p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            Étape 2
+          </p>
+          <h2 className="mt-2 text-lg font-semibold text-foreground">Nommer et sauvegarder</h2>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            Une fois l&apos;échantillon prêt, donnez-lui un nom clair puis enregistrez-le.
+          </p>
+
+          {previewUrl ? (
+            <div className="mt-5 space-y-4">
+              {/* biome-ignore lint/a11y/useMediaCaption: voice preview */}
+              <audio className="h-11 w-full" controls src={previewUrl} />
+
+              <div className="space-y-3">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs font-medium text-muted-foreground">Nom de la voix *</span>
+                  <input
+                    className="h-10 rounded-2xl border border-border bg-background px-3 text-sm"
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Ex: standard accueil, CEO Martin, SAV premium"
+                    type="text"
+                    value={name}
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    Transcription de référence (optionnel)
+                  </span>
+                  <input
+                    className="h-10 rounded-2xl border border-border bg-background px-3 text-sm"
+                    onChange={(e) => setRefText(e.target.value)}
+                    placeholder="Ex: Bonjour, je m'appelle Martin et je vous souhaite la bienvenue."
+                    type="text"
+                    value={refText}
+                  />
+                </label>
+              </div>
+
+              <button
+                className="inline-flex items-center gap-2 rounded-2xl bg-foreground px-4 py-2.5 text-sm text-background hover:opacity-90 disabled:opacity-50"
                 disabled={uploading || !name.trim()}
                 onClick={() => void upload()}
                 type="button"
               >
                 <UploadIcon className="size-4" />
-                {uploading ? "Sauvegarde..." : "Sauvegarder la voix"}
+                {uploading ? "Sauvegarde..." : "Sauvegarder cette voix"}
               </button>
-              {uploadStatus && (
-                <p className="text-sm text-muted-foreground">{uploadStatus}</p>
-              )}
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="mt-5 rounded-2xl border border-dashed border-border bg-card/40 p-5 text-sm text-muted-foreground">
+              Capturez ou importez d&apos;abord un échantillon. Le formulaire de sauvegarde
+              apparaîtra ici automatiquement.
+            </div>
+          )}
+
+          {uploadStatus && (
+            <p className="mt-4 text-sm text-muted-foreground">{uploadStatus}</p>
+          )}
+        </section>
       </div>
 
-      {/* Liste des voix sauvegardées */}
-      <div className="space-y-2">
-        {loadingVoices ? (
-          <p className="text-sm text-muted-foreground">Chargement...</p>
-        ) : voices.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Aucune voix enregistrée. Clique sur "Enregistrer" pour commencer.
-          </p>
-        ) : (
-          voices.map((v) => (
-            <div
-              className="flex items-center justify-between gap-3 rounded-xl border border-border bg-background p-3"
-              key={v.id}
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{v.name}</p>
-                {v.reference_text && (
-                  <p className="truncate text-xs text-muted-foreground">
-                    {v.reference_text}
-                  </p>
-                )}
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <a
-                  className="flex size-8 items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-foreground"
-                  href={v.url}
-                  rel="noreferrer"
-                  target="_blank"
-                  title="Écouter"
-                >
-                  <PlayIcon className="size-3.5" />
-                </a>
-                <ConsentButton voiceId={v.id} voiceName={v.name} />
-                <button
-                  className="flex size-8 items-center justify-center rounded-lg border border-border text-muted-foreground hover:border-red-300 hover:text-red-500"
-                  onClick={() => void deleteVoice(v.id)}
-                  title="Supprimer"
-                  type="button"
-                >
-                  <Trash2Icon className="size-3.5" />
-                </button>
-              </div>
+      <section className="rounded-3xl border border-border/70 bg-background/80 p-5 md:p-6">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              Étape 3
+            </p>
+            <h2 className="mt-2 text-lg font-semibold text-foreground">Bibliothèque des voix</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Écoutez, vérifiez le consentement et supprimez les doublons inutiles.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 space-y-3">
+          {loadingVoices ? (
+            <p className="text-sm text-muted-foreground">Chargement...</p>
+          ) : voices.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border bg-card/40 p-5 text-sm text-muted-foreground">
+              Aucune voix enregistrée pour le moment. Commencez par créer votre première voix.
             </div>
-          ))
-        )}
-      </div>
+          ) : (
+            voices.map((v) => (
+              <div
+                className="flex flex-col gap-3 rounded-2xl border border-border bg-card/50 p-4 sm:flex-row sm:items-center sm:justify-between"
+                key={v.id}
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-foreground">{v.name}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {v.reference_text || 'Aucune transcription de référence enregistrée.'}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <ConsentButton voiceId={v.id} voiceName={v.name} />
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        className="flex size-9 items-center justify-center rounded-xl border border-border text-muted-foreground hover:text-foreground"
+                        title="Actions"
+                        type="button"
+                      >
+                        <MoreHorizontalIcon className="size-4" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-44">
+                      <DropdownMenuItem asChild>
+                        <a href={v.url} rel="noreferrer" target="_blank">
+                          <PlayIcon className="size-4" />
+                          Écouter
+                        </a>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => void deleteVoice(v.id)} variant="destructive">
+                        <Trash2Icon className="size-4" />
+                        Supprimer
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
     </div>
   );
 }

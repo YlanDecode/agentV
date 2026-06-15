@@ -27,7 +27,10 @@ export async function PATCH(request: Request, { params }: Params) {
       })
     );
   } catch {
-    return Response.json({ error: "RAG document update failed" }, { status: 502 });
+    return Response.json(
+      { error: 'Impossible de mettre à jour ce document RAG.' },
+      { status: 502 }
+    );
   }
 }
 
@@ -37,6 +40,9 @@ export async function DELETE(_request: Request, { params }: Params) {
   try {
     return forward(await agentVocalFetch(`/rag/documents/${id}`, { method: "DELETE" }));
   } catch {
-    return Response.json({ error: "RAG document deletion failed" }, { status: 502 });
+    return Response.json(
+      { error: 'Impossible de supprimer ce document RAG.' },
+      { status: 502 }
+    );
   }
 }

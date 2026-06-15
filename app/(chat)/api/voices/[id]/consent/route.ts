@@ -21,7 +21,7 @@ export async function GET(_req: Request, { params }: Params) {
   try {
     return forward(await agentVocalFetch(`/api/voices/${id}/consent`));
   } catch {
-    return Response.json({ error: "Consent fetch failed" }, { status: 502 });
+    return Response.json({ error: 'Impossible de charger le consentement vocal.' }, { status: 502 });
   }
 }
 
@@ -38,7 +38,7 @@ export async function POST(req: Request, { params }: Params) {
       })
     );
   } catch {
-    return Response.json({ error: "Consent grant failed" }, { status: 502 });
+    return Response.json({ error: 'Impossible d’enregistrer le consentement vocal.' }, { status: 502 });
   }
 }
 
@@ -48,6 +48,6 @@ export async function DELETE(_req: Request, { params }: Params) {
   try {
     return forward(await agentVocalFetch(`/api/voices/${id}/consent`, { method: "DELETE" }));
   } catch {
-    return Response.json({ error: "Consent revocation failed" }, { status: 502 });
+    return Response.json({ error: 'Impossible de révoquer le consentement vocal.' }, { status: 502 });
   }
 }
