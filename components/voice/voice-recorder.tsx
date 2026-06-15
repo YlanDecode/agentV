@@ -3,6 +3,7 @@
 import { FolderOpenIcon, MicIcon, PlayIcon, SquareIcon, Trash2Icon, UploadIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VoiceSample } from "@/lib/supabase/voices";
+import { ConsentButton } from "@/components/voice/consent-button";
 
 async function blobToWav(blob: Blob): Promise<Blob> {
   const arrayBuffer = await blob.arrayBuffer();
@@ -322,6 +323,7 @@ export function VoiceRecorder() {
                 >
                   <PlayIcon className="size-3.5" />
                 </a>
+                <ConsentButton voiceId={v.id} voiceName={v.name} />
                 <button
                   className="flex size-8 items-center justify-center rounded-lg border border-border text-muted-foreground hover:border-red-300 hover:text-red-500"
                   onClick={() => void deleteVoice(v.id)}

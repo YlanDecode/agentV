@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { VoiceRecorder } from "@/components/voice/voice-recorder";
-import { useEffect, useState } from "react";
+import { RagDocuments } from "@/components/rag/rag-documents";
+import Papa from "papaparse";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type PersonaForm = {
   id?: number;
@@ -49,6 +51,17 @@ type SettingsPayload = {
   }>;
 };
 
+type ImportedKnowledgeEntry = {
+  question: string;
+  reponse: string;
+};
+
+const SERIOUS_TEXT_PROMPT =
+  "Tu es un assistant francophone naturel, clair, utile et sobre. Réponds avec précision. N'utilise ni humour, ni ironie, ni style théâtral. Ne brode jamais. Si une information manque, dis-le clairement.";
+
+const SERIOUS_VOICE_PROMPT =
+  "Tu réponds pour une synthèse vocale temps réel. Parle comme un humain au téléphone: phrases naturelles, courtes à moyennes, fluides, une idée par phrase, sans liste. Reste sobre, professionnel, rassurant, sans humour, sans blague, sans familiarité excessive.";
+
 const emptyPersona: PersonaForm = {
   name: "",
   role: "",
@@ -75,6 +88,8 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
+  const [uploadingKnowledge, setUploadingKnowledge] = useState(false);
+  const knowledgeInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -100,6 +115,18 @@ export default function SettingsPage() {
     setPersona((current) => ({ ...current, [key]: value }));
   };
 
+  const reload = async () => {
+    const response = await fetch("/api/settings/clone", {
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      throw new Error("Impossible de recharger la configuration.");
+    }
+    const payload = (await response.json()) as SettingsPayload;
+    setData(payload);
+    setPersona(payload.persona);
+  };
+
   const save = async () => {
     setSaving(true);
     setStatus("");
@@ -122,6 +149,146 @@ export default function SettingsPage() {
     setSaving(false);
     setStatus("Configuration POC sauvegardee dans Supabase.");
   };
+
+  const applySeriousPrompts = () => {
+    setPersona((current) => ({
+      ...current,
+      cloneSystemPrompt: SERIOUS_TEXT_PROMPT,
+      cloneVoiceSystemPrompt: SERIOUS_VOICE_PROMPT,
+    }));
+    setStatus("Preset de prompt sobre appliqué. Sauvegarde pour l'activer.");
+  };
+
+  const parseTextKnowledge = (content: string, sourceName: string): ImportedKnowledgeEntry[] => {
+    const normalized = content.replace(/\r\n/g, "\n").trim();
+    if (!normalized) return [];
+
+    const qaMatches = [...normalized.matchAll(/(?:^|\n)Q\s*[:\-]\s*(.+?)\nA\s*[:\-]\s*([\s\S]*?)(?=\nQ\s*[:\-]|$)/gi)];
+    if (qaMatches.length > 0) {
+      return qaMatches
+        .map((match) => ({
+          question: match[1].trim(),
+          reponse: match[2].trim(),
+        }))
+        .filter((entry) => entry.question && entry.reponse);
+    }
+
+    const paragraphs = normalized
+      .split(/\n\s*\n/)
+      .map((paragraph) => paragraph.replace(/^#+\s*/gm, "").trim())
+      .filter((paragraph) => paragraph.length >= 40)
+      .slice(0, 12);
+
+    return paragraphs.map((paragraph, index) => ({
+      question:
+        index === 0
+          ? `Quels sont les points importants dans ${sourceName} ?`
+          : `Quel autre point important faut-il retenir de ${sourceName} ?`,
+      reponse: paragraph,
+    }));
+  };
+
+  const parseCsvKnowledge = (content: string, sourceName: string): ImportedKnowledgeEntry[] => {
+    const parsed = Papa.parse<Record<string, string>>(content, {
+      header: true,
+      skipEmptyLines: true,
+    });
+
+    const rows = Array.isArray(parsed.data) ? parsed.data : [];
+    if (rows.length === 0) {
+      return [];
+    }
+
+    const headers = Object.keys(rows[0] ?? {});
+    const findHeader = (candidates: string[]) =>
+      headers.find((header) => candidates.includes(header.trim().toLowerCase()));
+
+    const questionHeader = findHeader(["question", "q", "demande"]);
+    const answerHeader = findHeader(["reponse", "réponse", "answer", "a"]);
+
+    if (questionHeader && answerHeader) {
+      return rows
+        .map((row) => ({
+          question: String(row[questionHeader] ?? "").trim(),
+          reponse: String(row[answerHeader] ?? "").trim(),
+        }))
+        .filter((entry) => entry.question && entry.reponse)
+        .slice(0, 24);
+    }
+
+    if (headers.length >= 2) {
+      return rows
+        .map((row) => ({
+          question: String(row[headers[0]] ?? "").trim(),
+          reponse: headers.slice(1).map((header) => String(row[header] ?? "").trim()).filter(Boolean).join(" | "),
+        }))
+        .filter((entry) => entry.question && entry.reponse)
+        .slice(0, 24);
+    }
+
+    const rawRows = Papa.parse<string[]>(content, {
+      header: false,
+      skipEmptyLines: true,
+    }).data;
+
+    return rawRows
+      .map((row) => ({
+        question: row[0]?.trim() ?? `Information importante de ${sourceName}`,
+        reponse: row.slice(1).join(" | ").trim(),
+      }))
+      .filter((entry) => entry.question && entry.reponse)
+      .slice(0, 24);
+  };
+
+  const parseKnowledgeFile = async (file: File) => {
+    const content = await file.text();
+    const lowerName = file.name.toLowerCase();
+    if (lowerName.endsWith(".csv") || file.type.includes("csv")) {
+      return parseCsvKnowledge(content, file.name);
+    }
+    return parseTextKnowledge(content, file.name);
+  };
+
+  const importKnowledgeFiles = async (files: FileList | File[]) => {
+    const selectedFiles = [...files].filter((file) => /\.(txt|md|markdown|csv)$/i.test(file.name));
+    if (selectedFiles.length === 0) {
+      setStatus("Aucun fichier compatible. Utilise .txt, .md ou .csv.");
+      return;
+    }
+
+    setUploadingKnowledge(true);
+    setStatus("");
+
+    try {
+      for (const file of selectedFiles) {
+        const entries = await parseKnowledgeFile(file);
+        if (entries.length === 0) {
+          continue;
+        }
+
+        const response = await fetch("/api/settings/knowledge", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sourceName: file.name, entries }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Import impossible pour ${file.name}`);
+        }
+      }
+
+      await reload();
+      setStatus("Documents importés dans la base de connaissance.");
+    } catch {
+      setStatus("Erreur pendant l'import des documents.");
+    } finally {
+      setUploadingKnowledge(false);
+    }
+  };
+
+  const knowledgeCategories = useMemo(() => {
+    return Array.from(new Set((data?.knowledgeBase ?? []).map((item) => item.categorie)));
+  }, [data]);
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 p-4 md:p-8">
@@ -186,6 +353,18 @@ export default function SettingsPage() {
               </Section>
 
               <Section title="Prompts">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    className="rounded-xl border border-border px-3 py-1.5 text-xs text-foreground hover:bg-muted"
+                    onClick={applySeriousPrompts}
+                    type="button"
+                  >
+                    Appliquer un preset sobre
+                  </button>
+                  <p className="text-xs text-muted-foreground">
+                    Utile si Groq répond avec un ton trop léger ou comique.
+                  </p>
+                </div>
                 <Field
                   label="Prompt texte"
                   multiline
@@ -256,6 +435,10 @@ export default function SettingsPage() {
                 <VoiceRecorder />
               </Section>
 
+              <Section title="Base documentaire RAG">
+                <RagDocuments />
+              </Section>
+
               <div className="flex items-center gap-3">
                 <button
                   className="rounded-xl bg-foreground px-4 py-2 text-sm text-background disabled:opacity-60"
@@ -273,6 +456,55 @@ export default function SettingsPage() {
 
             <div className="space-y-6">
               <Section title="Knowledge Base Branchee">
+                <div className="space-y-3 rounded-xl border border-dashed border-border bg-background p-4">
+                  <input
+                    accept=".txt,.md,.markdown,.csv,text/plain,text/markdown,text/csv"
+                    className="hidden"
+                    multiple
+                    onChange={(event) => {
+                      if (event.currentTarget.files) {
+                        void importKnowledgeFiles(event.currentTarget.files);
+                      }
+                      event.currentTarget.value = "";
+                    }}
+                    ref={knowledgeInputRef}
+                    type="file"
+                  />
+                  <div
+                    className="rounded-xl border border-dashed border-border/80 p-4 text-sm text-muted-foreground"
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      if (event.dataTransfer.files?.length) {
+                        void importKnowledgeFiles(event.dataTransfer.files);
+                      }
+                    }}
+                  >
+                    <p className="font-medium text-foreground">
+                      Glisse-dépose des fichiers `.txt`, `.md` ou `.csv`
+                    </p>
+                    <p className="mt-1">
+                      On extrait les Q/R explicites et les informations importantes pour les injecter dans la base de connaissance utilisée par le prompt.
+                    </p>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <button
+                        className="rounded-xl bg-foreground px-3 py-2 text-sm text-background disabled:opacity-60"
+                        disabled={uploadingKnowledge}
+                        onClick={() => knowledgeInputRef.current?.click()}
+                        type="button"
+                      >
+                        {uploadingKnowledge ? "Import..." : "Choisir des fichiers"}
+                      </button>
+                      {knowledgeCategories.length > 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                          Sources chargées: {knowledgeCategories.join(", ")}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
                 <PreviewList
                   emptyLabel="Aucune entree knowledge_base active."
                   items={data.knowledgeBase.map((item) => ({
