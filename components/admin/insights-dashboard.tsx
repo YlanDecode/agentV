@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { AlertTriangleIcon, BotIcon, Clock3Icon, GaugeIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import { fetchAnalyticsDashboard, type AnalyticsDashboardPayload } from "@/lib/agentvocal-admin-api";
+import { fetchAnalyticsDashboard, fetchAnalyticsLive, type AnalyticsDashboardPayload, type AnalyticsLivePayload } from "@/lib/agentvocal-admin-api";
 import { getApiErrorMessage } from "@/lib/axios";
 
 type LoadState = {
@@ -25,16 +26,70 @@ export function InsightsDashboard() {
   const [state, setState] = useState<LoadState>({ loading: true, error: "", data: null });
 
   useEffect(() => {
-    const load = async () => {
+    let cancelled = false;
+
+    const loadDashboard = async () => {
       try {
         const data = await fetchAnalyticsDashboard();
+        if (cancelled) {
+          return;
+        }
         setState({ loading: false, error: "", data });
       } catch (error) {
+        if (cancelled) {
+          return;
+        }
         setState({ loading: false, error: getApiErrorMessage(error, "Impossible de charger le cockpit analytics."), data: null });
       }
     };
 
-    void load();
+    const patchLive = (live: AnalyticsLivePayload) => {
+      setState((current) => {
+        if (!current.data) {
+          return current;
+        }
+
+        return {
+          ...current,
+          data: {
+            ...current.data,
+            live,
+            summary: {
+              ...current.data.summary,
+              active_sessions: live.active_sessions,
+              active_voice_sessions: live.active_voice_sessions,
+              active_text_sessions: live.active_text_sessions,
+              peak_concurrent_sessions_today: live.peak_concurrent_sessions_today,
+            },
+          },
+        };
+      });
+    };
+
+    const loadLive = async () => {
+      try {
+        const live = await fetchAnalyticsLive();
+        if (!cancelled) {
+          patchLive(live);
+        }
+      } catch {
+        // Le dashboard complet reste la source de vérité si le flux live échoue ponctuellement.
+      }
+    };
+
+    void loadDashboard();
+    const liveInterval = window.setInterval(() => {
+      void loadLive();
+    }, 5000);
+    const dashboardInterval = window.setInterval(() => {
+      void loadDashboard();
+    }, 15000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(liveInterval);
+      window.clearInterval(dashboardInterval);
+    };
   }, []);
 
   if (state.loading) {
@@ -109,10 +164,14 @@ export function InsightsDashboard() {
         <Panel title="Utilisateurs les plus consommateurs" subtitle="Ceux qui utilisent le plus l'agent aujourd'hui.">
           <ListBlock
             emptyLabel="Aucune consommation utilisateur détectée."
-            items={topUsers.slice(0, 6).map((item) => ({
-              title: String(item.user_id ?? "Utilisateur"),
-              description: `${metric(item.responses_count)} réponses · ${metric(item.voice_seconds)} s voix`,
-            }))}
+            items={topUsers.slice(0, 6).map((item) => {
+              const userId = String(item.user_id ?? "").trim();
+              return {
+                title: userId || "Utilisateur inconnu",
+                description: `${metric(item.responses_count)} réponses · ${metric(item.voice_seconds)} s voix`,
+                href: userId ? `/admin/analytics/user-sessions?user_id=${encodeURIComponent(userId)}` : undefined,
+              };
+            })}
           />
         </Panel>
 
@@ -129,10 +188,14 @@ export function InsightsDashboard() {
       <Panel title="Conversations à revoir" subtitle="Les sessions qui demandent une action éditoriale ou produit.">
         <ListBlock
           emptyLabel="Aucune session prioritaire à revoir."
-          items={problemSessions.slice(0, 10).map((item) => ({
-            title: `${String(item.session_id ?? "session")} · ${String(item.mode ?? "text")}`,
-            description: `${metric(item.fallback_count)} fallback · ${metric(item.error_count)} erreur(s) · ${String(item.review_reason ?? "À analyser")}`,
-          }))}
+          items={problemSessions.slice(0, 10).map((item) => {
+            const sessionId = String(item.session_id ?? "").trim();
+            return {
+              title: `${sessionId || "session"} · ${String(item.mode ?? "text")}`,
+              description: `${metric(item.fallback_count)} fallback · ${metric(item.error_count)} erreur(s) · ${String(item.review_reason ?? "À analyser")}`,
+              href: sessionId ? `/admin/analytics/sessions/${encodeURIComponent(sessionId)}` : undefined,
+            };
+          })}
         />
       </Panel>
     </div>
@@ -167,7 +230,13 @@ function Panel({ title, subtitle, children }: { title: string; subtitle: string;
   );
 }
 
-function ListBlock({ items, emptyLabel }: { items: Array<{ title: string; description: string }>; emptyLabel: string }) {
+function ListBlock({
+  items,
+  emptyLabel,
+}: {
+  items: Array<{ title: string; description: string; href?: string }>;
+  emptyLabel: string;
+}) {
   if (items.length === 0) {
     return <p className="text-sm text-muted-foreground">{emptyLabel}</p>;
   }
@@ -175,10 +244,21 @@ function ListBlock({ items, emptyLabel }: { items: Array<{ title: string; descri
   return (
     <div className="space-y-3">
       {items.map((item, index) => (
-        <div className="rounded-2xl border border-border bg-card/50 p-4" key={`${item.title}-${index}`}>
-          <p className="text-sm font-medium text-foreground">{item.title}</p>
-          <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>
-        </div>
+        item.href ? (
+          <Link
+            className="block rounded-2xl border border-border bg-card/50 p-4 transition-colors hover:border-foreground/30 hover:bg-card"
+            href={item.href}
+            key={`${item.title}-${index}`}
+          >
+            <p className="text-sm font-medium text-foreground">{item.title}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>
+          </Link>
+        ) : (
+          <div className="rounded-2xl border border-border bg-card/50 p-4" key={`${item.title}-${index}`}>
+            <p className="text-sm font-medium text-foreground">{item.title}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>
+          </div>
+        )
       ))}
     </div>
   );

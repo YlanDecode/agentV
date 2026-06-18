@@ -44,6 +44,7 @@ import { isN8nModeEnabled, sendTextToN8n } from "@/lib/n8n/client";
 import { checkIpRateLimit } from "@/lib/ratelimit";
 import { saveConversationToSupabase } from "@/lib/supabase/conversations";
 import { buildSystemPrompt, getCloneSettings } from "@/lib/supabase/poc-config";
+import { agentVocalFetch, isAgentVocalEnabled } from "@/lib/backend/agentvocal";
 import type { ChatMessage } from "@/lib/types";
 import { convertToUIMessages, generateUUID } from "@/lib/utils";
 import { generateTitleFromUserMessage } from "../../actions";
@@ -67,6 +68,14 @@ function splitForStreaming(text: string, chunkSize = 14) {
     chunks.push(text.slice(index, index + chunkSize));
   }
   return chunks;
+}
+
+function extractTextParts(parts: Array<{ type?: string; text?: string }> | undefined) {
+  return (parts ?? [])
+    .filter((part) => part.type === "text")
+    .map((part) => part.text ?? "")
+    .join(" ")
+    .trim();
 }
 
 function extractDeltaFromSseData(data: string) {
@@ -180,6 +189,89 @@ async function streamN8nTextToUi({
   return fullText.trim();
 }
 
+async function requestAgentVocalTextResponse({
+  chatId,
+  messages,
+  userId,
+  userName,
+}: {
+  chatId: string;
+  messages: Array<{ role: string; content: string }>;
+  userId?: string | null;
+  userName: string;
+}) {
+  const response = await agentVocalFetch("/chat", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messages,
+      mode: "text",
+      session_id: chatId,
+      user_id: userId ?? undefined,
+      user_name: userName,
+      channel: "web",
+    }),
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as
+      | { detail?: string; error?: string; message?: string }
+      | null;
+    throw new Error(
+      payload?.detail ?? payload?.error ?? payload?.message ?? "AgentVOCAL text request failed"
+    );
+  }
+
+  const payload = (await response.json()) as {
+    text?: string;
+    session_id?: string;
+  };
+
+  return {
+    text: payload.text?.trim() ?? "",
+    sessionId: payload.session_id ?? chatId,
+  };
+}
+
+async function trackAgentVocalTextTurn({
+  chatId,
+  userText,
+  assistantText,
+  userId,
+  userName,
+  metadata,
+}: {
+  chatId: string;
+  userText: string;
+  assistantText: string;
+  userId?: string | null;
+  userName: string;
+  metadata?: Record<string, unknown>;
+}) {
+  if (!isAgentVocalEnabled() || !userText.trim() || !assistantText.trim()) {
+    return;
+  }
+
+  await agentVocalFetch("/analytics/track-text-turn", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      session_id: chatId,
+      user_id: userId ?? undefined,
+      user_name: userName,
+      channel: "web",
+      mode: "text",
+      user_message: userText,
+      assistant_message: assistantText,
+      metadata: metadata ?? {},
+    }),
+  });
+}
+
 export async function POST(request: Request) {
   let requestBody: PostRequestBody;
 
@@ -236,6 +328,69 @@ export async function POST(request: Request) {
       }
 
       if (isGroqCloneEnabled()) {
+        if (isAgentVocalEnabled()) {
+          const history = (conversationMessages ?? []).flatMap((currentMessage) => {
+            const textContent = currentMessage.parts
+              .filter((part) => "type" in part && part.type === "text")
+              .map((part) => String((part as { text?: string }).text ?? ""))
+              .join(" ")
+              .trim();
+
+            if (!textContent) {
+              return [];
+            }
+
+            return [{ role: currentMessage.role, content: textContent }];
+          });
+
+          const assistantMessageId = generateUUID();
+          let assistantText = "";
+
+          const stream = createUIMessageStream({
+            execute: async ({ writer }) => {
+              writer.write({ type: "text-start", id: assistantMessageId });
+              const result = await requestAgentVocalTextResponse({
+                chatId: id,
+                messages: history,
+                userName: displayName,
+              });
+              assistantText = result.text;
+
+              for (const chunk of splitForStreaming(assistantText)) {
+                writer.write({
+                  type: "text-delta",
+                  id: assistantMessageId,
+                  delta: chunk,
+                });
+                await new Promise((resolve) => setTimeout(resolve, 20));
+              }
+
+              writer.write({ type: "text-end", id: assistantMessageId });
+            },
+            generateId: generateUUID,
+            onFinish: async () => {
+              if (!assistantText) {
+                return;
+              }
+
+              try {
+                await saveConversationToSupabase({
+                  sessionId: id,
+                  userName: displayName,
+                  userMessage: text,
+                  botResponse: assistantText,
+                  channel: "web",
+                });
+              } catch (error) {
+                console.error("Failed to save anonymous conversation", error);
+              }
+            },
+            onError: () => "Oops, an error occurred!",
+          });
+
+          return createUIMessageStreamResponse({ stream });
+        }
+
         const cloneSettings = await getCloneSettings();
         const systemContent = await buildSystemPrompt({ mode: "text" });
         const history = (conversationMessages ?? []).flatMap(
@@ -275,6 +430,68 @@ export async function POST(request: Request) {
               writeDelta: (part) => writer.write(part),
               messageId: assistantMessageId,
             });
+            writer.write({ type: "text-end", id: assistantMessageId });
+          },
+          generateId: generateUUID,
+          onFinish: async () => {
+            if (!assistantText) {
+              return;
+            }
+
+            try {
+              await saveConversationToSupabase({
+                sessionId: id,
+                userName: displayName,
+                userMessage: text,
+                botResponse: assistantText,
+                channel: "web",
+              });
+            } catch (error) {
+              console.error("Failed to save anonymous conversation", error);
+            }
+          },
+          onError: () => "Oops, an error occurred!",
+        });
+
+        return createUIMessageStreamResponse({ stream });
+      }
+
+      if (isAgentVocalEnabled()) {
+        const history = (conversationMessages ?? []).flatMap((currentMessage) => {
+          const textContent = currentMessage.parts
+            .filter((part) => "type" in part && part.type === "text")
+            .map((part) => String((part as { text?: string }).text ?? ""))
+            .join(" ")
+            .trim();
+
+          if (!textContent) {
+            return [];
+          }
+
+          return [{ role: currentMessage.role, content: textContent }];
+        });
+
+        const assistantMessageId = generateUUID();
+        let assistantText = "";
+        const stream = createUIMessageStream({
+          execute: async ({ writer }) => {
+            writer.write({ type: "text-start", id: assistantMessageId });
+            const result = await requestAgentVocalTextResponse({
+              chatId: id,
+              messages: history,
+              userName: displayName,
+            });
+            assistantText = result.text;
+
+            for (const chunk of splitForStreaming(assistantText)) {
+              writer.write({
+                type: "text-delta",
+                id: assistantMessageId,
+                delta: chunk,
+              });
+              await new Promise((resolve) => setTimeout(resolve, 20));
+            }
+
             writer.write({ type: "text-end", id: assistantMessageId });
           },
           generateId: generateUUID,
@@ -463,6 +680,71 @@ export async function POST(request: Request) {
     }
 
     if (isGroqCloneEnabled() && message?.role === "user") {
+      if (isAgentVocalEnabled()) {
+        const history = uiMessages.flatMap((currentMessage) => {
+          const textContent = currentMessage.parts
+            .filter((part) => "type" in part && part.type === "text")
+            .map((part) => String((part as { text?: string }).text ?? ""))
+            .join(" ")
+            .trim();
+
+          if (!textContent) {
+            return [];
+          }
+
+          return [{ role: currentMessage.role, content: textContent }];
+        });
+
+        const assistantMessageId = generateUUID();
+        let assistantText = "";
+
+        const stream = createUIMessageStream({
+          execute: async ({ writer }) => {
+            writer.write({ type: "text-start", id: assistantMessageId });
+            const result = await requestAgentVocalTextResponse({
+              chatId: id,
+              messages: history,
+              userId: session.user.id,
+              userName: displayName,
+            });
+            assistantText = result.text;
+
+            for (const chunk of splitForStreaming(assistantText)) {
+              writer.write({
+                type: "text-delta",
+                id: assistantMessageId,
+                delta: chunk,
+              });
+              await new Promise((resolve) => setTimeout(resolve, 20));
+            }
+
+            writer.write({ type: "text-end", id: assistantMessageId });
+          },
+          generateId: generateUUID,
+          onFinish: async () => {
+            if (!assistantText) {
+              return;
+            }
+
+            await saveMessages({
+              messages: [
+                {
+                  id: assistantMessageId,
+                  role: "assistant",
+                  parts: [{ type: "text", text: assistantText }],
+                  createdAt: new Date(),
+                  attachments: [],
+                  chatId: id,
+                },
+              ],
+            });
+          },
+          onError: () => "Oops, an error occurred!",
+        });
+
+        return createUIMessageStreamResponse({ stream });
+      }
+
       const cloneSettings = await getCloneSettings();
       const systemContent = await buildSystemPrompt({ mode: "text" });
       const text = message.parts
@@ -528,6 +810,71 @@ export async function POST(request: Request) {
     }
 
     if (isN8nModeEnabled() && message?.role === "user") {
+      if (isAgentVocalEnabled()) {
+        const history = uiMessages.flatMap((currentMessage) => {
+          const textContent = currentMessage.parts
+            .filter((part) => "type" in part && part.type === "text")
+            .map((part) => String((part as { text?: string }).text ?? ""))
+            .join(" ")
+            .trim();
+
+          if (!textContent) {
+            return [];
+          }
+
+          return [{ role: currentMessage.role, content: textContent }];
+        });
+
+        const assistantMessageId = generateUUID();
+        let assistantText = "";
+
+        const stream = createUIMessageStream({
+          execute: async ({ writer }) => {
+            writer.write({ type: "text-start", id: assistantMessageId });
+            const result = await requestAgentVocalTextResponse({
+              chatId: id,
+              messages: history,
+              userId: session.user.id,
+              userName: displayName,
+            });
+            assistantText = result.text;
+
+            for (const chunk of splitForStreaming(assistantText)) {
+              writer.write({
+                type: "text-delta",
+                id: assistantMessageId,
+                delta: chunk,
+              });
+              await new Promise((resolve) => setTimeout(resolve, 20));
+            }
+
+            writer.write({ type: "text-end", id: assistantMessageId });
+          },
+          generateId: generateUUID,
+          onFinish: async () => {
+            if (!assistantText) {
+              return;
+            }
+
+            await saveMessages({
+              messages: [
+                {
+                  id: assistantMessageId,
+                  role: "assistant",
+                  parts: [{ type: "text", text: assistantText }],
+                  createdAt: new Date(),
+                  attachments: [],
+                  chatId: id,
+                },
+              ],
+            });
+          },
+          onError: () => "Oops, an error occurred!",
+        });
+
+        return createUIMessageStreamResponse({ stream });
+      }
+
       const text = message.parts
         .filter((part) => part.type === "text")
         .map((part) => part.text)
@@ -712,6 +1059,34 @@ export async function POST(request: Request) {
               chatId: id,
             })),
           });
+        }
+
+        if (message?.role === "user") {
+          const userText = extractTextParts(message.parts);
+          const assistantText = [...finishedMessages]
+            .reverse()
+            .filter((currentMessage) => currentMessage.role === "assistant")
+            .map((currentMessage) => extractTextParts(currentMessage.parts as Array<{ type?: string; text?: string }>))
+            .find((text) => text.length > 0);
+
+          if (userText && assistantText) {
+            try {
+              await trackAgentVocalTextTurn({
+                chatId: id,
+                userText,
+                assistantText,
+                userId: session.user.id,
+                userName: displayName,
+                metadata: {
+                  source: "next-ai-sdk",
+                  model: chatModel,
+                  tool_approval_flow: isToolApprovalFlow,
+                },
+              });
+            } catch (error) {
+              console.error("Failed to track standard chat turn", error);
+            }
+          }
         }
       },
       onError: (error) => {

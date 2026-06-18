@@ -46,6 +46,64 @@ export type AnalyticsDashboardPayload = {
   quota_overview: Record<string, unknown>;
 };
 
+export type AnalyticsLivePayload = {
+  active_sessions: number;
+  active_voice_sessions: number;
+  active_text_sessions: number;
+  peak_concurrent_sessions_today: number;
+};
+
+export type AnalyticsUserSessionItem = {
+  session_id: string;
+  user_id?: string | null;
+  channel: string;
+  mode: string;
+  status: string;
+  started_at: string;
+  ended_at?: string | null;
+  duration_seconds: number;
+  message_count: number;
+  response_count: number;
+  fallback_count: number;
+  error_count: number;
+  needs_review: boolean;
+  review_reason?: string | null;
+};
+
+export type AnalyticsSessionMessage = {
+  id: number;
+  message_id: string | null;
+  role: string;
+  content: string;
+  feedback_rating?: string | null;
+  feedback_comment?: string | null;
+  is_flagged?: boolean;
+  flag_reason?: string | null;
+  created_at: string;
+};
+
+export type AnalyticsSessionIssue = {
+  id: number;
+  issue_type: string;
+  severity: string;
+  description: string;
+  suggested_action?: string | null;
+  status: string;
+  created_at: string;
+  metadata: Record<string, unknown>;
+};
+
+export type AnalyticsUserSessionsPayload = {
+  user_id: string;
+  sessions: AnalyticsUserSessionItem[];
+};
+
+export type AnalyticsSessionDetailPayload = {
+  session: AnalyticsUserSessionItem;
+  messages: AnalyticsSessionMessage[];
+  issues: AnalyticsSessionIssue[];
+};
+
 export async function fetchCloneConfig() {
   return axios.get<POCConfigPayload>('/api/settings/clone');
 }
@@ -60,6 +118,22 @@ export async function fetchPromptConfig(mode: PromptMode) {
 
 export async function fetchAnalyticsDashboard() {
   return axios.get<AnalyticsDashboardPayload>('/api/analytics/dashboard');
+}
+
+export async function fetchAnalyticsLive() {
+  return axios.get<AnalyticsLivePayload>('/api/analytics/live');
+}
+
+export async function fetchAnalyticsUserSessions(userId: string, limit = 20) {
+  const params = new URLSearchParams({
+    user_id: userId,
+    limit: String(Math.max(1, Math.min(100, limit))),
+  });
+  return axios.get<AnalyticsUserSessionsPayload>(`/api/analytics/user-sessions?${params.toString()}`);
+}
+
+export async function fetchAnalyticsSessionDetail(sessionId: string) {
+  return axios.get<AnalyticsSessionDetailPayload>(`/api/analytics/sessions/${encodeURIComponent(sessionId)}`);
 }
 
 export async function savePromptConfig(
