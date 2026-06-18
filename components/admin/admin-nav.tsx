@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BookOpenIcon, BotIcon, MenuIcon, MicIcon, UsersIcon } from "lucide-react";
+import { BarChart3Icon, BookOpenIcon, BotIcon, MenuIcon, MicIcon, UsersIcon } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -17,7 +17,7 @@ export const ADMIN_NAV_ITEMS = [
   {
     href: "/admin",
     label: "Vue d'ensemble",
-    description: "Les 3 zones essentielles",
+    description: "L'espace admin",
     icon: BotIcon,
   },
   {
@@ -37,6 +37,12 @@ export const ADMIN_NAV_ITEMS = [
     label: "Voix",
     description: "Échantillons et consentement",
     icon: MicIcon,
+  },
+  {
+    href: "/admin/analytics",
+    label: "Analytics",
+    description: "KPI temps réel et santé opérationnelle",
+    icon: BarChart3Icon,
   },
 ];
 
@@ -109,7 +115,7 @@ export function AdminNavMobile() {
           <SheetHeader className="px-5 pb-2 pt-5">
             <SheetTitle>Sections admin</SheetTitle>
             <SheetDescription>
-              Naviguez entre les 3 zones principales sans repasser par plusieurs menus.
+              Naviguez entre les sections principales sans repasser par plusieurs menus.
             </SheetDescription>
           </SheetHeader>
           <div className="grid gap-2 px-5 pb-6">
