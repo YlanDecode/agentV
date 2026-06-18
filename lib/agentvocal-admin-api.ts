@@ -19,7 +19,7 @@ export type RagDocument = {
   id: number;
   title: string;
   content: string;
-  source_format: 'txt' | 'md' | 'csv';
+  source_format: 'txt' | 'md' | 'csv' | 'audio' | 'video';
   source_type: string;
   metadata: Record<string, unknown>;
   active: boolean;
@@ -35,6 +35,17 @@ export type VoiceConsent = {
   created_at: string;
 };
 
+export type AnalyticsDashboardPayload = {
+  summary: Record<string, unknown>;
+  live: Record<string, unknown>;
+  problem_sessions: Array<Record<string, unknown>>;
+  missing_topics: Array<Record<string, unknown>>;
+  top_documents: Array<Record<string, unknown>>;
+  top_users: Array<Record<string, unknown>>;
+  open_issues: Array<Record<string, unknown>>;
+  quota_overview: Record<string, unknown>;
+};
+
 export async function fetchCloneConfig() {
   return axios.get<POCConfigPayload>('/api/settings/clone');
 }
@@ -45,6 +56,10 @@ export async function saveCloneConfig(persona: PersonaForm) {
 
 export async function fetchPromptConfig(mode: PromptMode) {
   return axios.get<PromptConfig>(`/api/prompt/${mode}`);
+}
+
+export async function fetchAnalyticsDashboard() {
+  return axios.get<AnalyticsDashboardPayload>('/api/analytics/dashboard');
 }
 
 export async function savePromptConfig(
@@ -72,7 +87,7 @@ export async function listRagDocuments() {
 export async function createRagDocument(input: {
   title: string;
   content: string;
-  source_format: 'txt' | 'md' | 'csv';
+  source_format: 'txt' | 'md' | 'csv' | 'audio' | 'video';
 }) {
   return axios.postJson<RagDocument>('/api/rag', input);
 }

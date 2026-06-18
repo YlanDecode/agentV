@@ -75,6 +75,7 @@ function setCookie(name: string, value: string) {
 type VoiceWsSession = {
   wsUrl: string;
   expiresIn: number;
+  userId?: string | null;
 };
 
 type VoiceWsEvent = {
@@ -762,6 +763,7 @@ function PureMultimodalInput({
             JSON.stringify({
               type: "init",
               session_id: chatId,
+              user_id: session.userId ?? undefined,
               user_name: "Web User",
               channel: "web",
               audio_format: audioFormat,

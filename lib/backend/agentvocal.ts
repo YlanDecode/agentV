@@ -102,7 +102,10 @@ export async function createVoiceWsSession() {
   };
 }
 
-export async function proxyVoiceChatRequest(request: Request) {
+export async function proxyVoiceChatRequest(
+  request: Request,
+  options?: { userId?: string | null }
+) {
   if (!isAgentVocalEnabled()) {
     return Response.json(
       {
@@ -121,6 +124,7 @@ export async function proxyVoiceChatRequest(request: Request) {
   }
 
   const sessionId = String(body.get("session_id") ?? crypto.randomUUID());
+  const userId = String(body.get("user_id") ?? options?.userId ?? "").trim();
   const channel = String(body.get("channel") ?? "web");
   const userName = String(body.get("user_name") ?? "Utilisateur");
   const voiceMode = body.get("voice_mode") ? String(body.get("voice_mode")) : "sample";
@@ -164,6 +168,7 @@ export async function proxyVoiceChatRequest(request: Request) {
     messages: [{ role: "user", content: transcription }],
     mode: voiceMode === "browser" ? "text" : "voice",
     session_id: sessionId,
+    user_id: userId || undefined,
     user_name: userName,
     channel,
   };
@@ -228,6 +233,8 @@ export async function proxyVoiceChatRequest(request: Request) {
     const payload = (await chatResponse.json()) as {
       text?: string;
       session_id?: string;
+      rag_query?: string;
+      sources?: Array<{ title?: string }>;
       tts?: {
         requested?: boolean;
         status?: string;
@@ -241,6 +248,18 @@ export async function proxyVoiceChatRequest(request: Request) {
     if (payload.session_id) {
       headers.set("X-Session-Id", payload.session_id);
     }
+    if (payload.rag_query) {
+      headers.set("X-Rag-Query", payload.rag_query);
+    }
+    if (Array.isArray(payload.sources)) {
+      const sourceTitles = payload.sources
+        .map((source) => source.title)
+        .filter((title): title is string => typeof title === "string" && title.length > 0);
+      if (sourceTitles.length > 0) {
+        headers.set("X-Rag-Sources", sourceTitles.join("; ").slice(0, 500));
+        headers.set("X-Rag-Sources-Count", String(sourceTitles.length));
+      }
+    }
     if (payload.text) {
       headers.set("X-Assistant-Text", encodeURIComponent(payload.text));
     }
@@ -249,6 +268,19 @@ export async function proxyVoiceChatRequest(request: Request) {
       status: chatResponse.status,
       headers,
     });
+  }
+
+  const ragSources = chatResponse.headers.get("X-Rag-Sources");
+  const ragQuery = chatResponse.headers.get("X-Rag-Query");
+  const ragSourcesCount = chatResponse.headers.get("X-Rag-Sources-Count");
+  if (ragSources) {
+    headers.set("X-Rag-Sources", ragSources);
+  }
+  if (ragQuery) {
+    headers.set("X-Rag-Query", ragQuery);
+  }
+  if (ragSourcesCount) {
+    headers.set("X-Rag-Sources-Count", ragSourcesCount);
   }
 
   const assistantText = chatResponse.headers.get("X-Assistant-Text");

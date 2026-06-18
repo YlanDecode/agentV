@@ -1,3 +1,4 @@
+import { auth } from "@/app/(auth)/auth";
 import { createVoiceWsSession, isAgentVocalEnabled } from "@/lib/backend/agentvocal";
 
 export async function POST() {
@@ -12,7 +13,12 @@ export async function POST() {
   }
 
   try {
-    return Response.json(await createVoiceWsSession());
+    const session = await auth();
+    const payload = await createVoiceWsSession();
+    return Response.json({
+      ...payload,
+      userId: session?.user?.id ?? null,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Voice session init failed";
     return Response.json({ error: message }, { status: 502 });

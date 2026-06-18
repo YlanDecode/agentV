@@ -35,7 +35,7 @@ type CreateForm = {
 };
 
 const EMPTY_FORM: CreateForm = { title: "", content: "", source_format: "txt" };
-const FORMAT_OPTIONS = ["txt", "md", "csv"];
+const FORMAT_OPTIONS = ["txt", "md", "csv", "audio", "video"] as const;
 
 type StatusState = {
   tone: 'success' | 'error';
@@ -223,7 +223,7 @@ export function RagDocuments() {
         </div>
 
         <input
-          accept=".txt,.md,.markdown,.csv,text/plain,text/markdown,text/csv"
+          accept=".txt,.md,.markdown,.csv,.mp3,.wav,.m4a,.ogg,.flac,.aac,.mp4,.mov,.mkv,.avi,.m4v,text/plain,text/markdown,text/csv,audio/*,video/*"
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0];
@@ -240,7 +240,7 @@ export function RagDocuments() {
           type="button"
         >
           <UploadIcon className="size-3.5" />
-          Importer fichier
+          Importer fichier ou média
         </button>
 
         <button
