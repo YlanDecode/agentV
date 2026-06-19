@@ -38,12 +38,14 @@ export type VoiceConsent = {
 export type AnalyticsDashboardPayload = {
   summary: Record<string, unknown>;
   live: Record<string, unknown>;
+  activity_history: AnalyticsHistoryPoint[];
   problem_sessions: Array<Record<string, unknown>>;
   missing_topics: Array<Record<string, unknown>>;
   top_documents: Array<Record<string, unknown>>;
   top_users: Array<Record<string, unknown>>;
   open_issues: Array<Record<string, unknown>>;
   quota_overview: Record<string, unknown>;
+  quota_blocks: AnalyticsQuotaBlock[];
 };
 
 export type AnalyticsLivePayload = {
@@ -68,6 +70,54 @@ export type AnalyticsUserSessionItem = {
   error_count: number;
   needs_review: boolean;
   review_reason?: string | null;
+};
+
+export type AnalyticsHistoryPoint = {
+  bucket: string;
+  label: string;
+  sessions: number;
+  sessions_needing_review: number;
+  responses: number;
+  messages: number;
+  voice_seconds: number;
+  fallback_count: number;
+  error_count: number;
+  blocked_count: number;
+  total_duration_seconds: number;
+};
+
+export type AnalyticsQuotaBlock = {
+  id: number;
+  user_id?: string | null;
+  session_id?: string | null;
+  reason: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type AnalyticsUserQuotaSummary = {
+  responses_per_hour: { limit: number; used: number; remaining: number };
+  responses_per_day: { limit: number; used: number; remaining: number };
+  voice_seconds_per_day: { limit: number; used: number; remaining: number };
+  concurrency: { user_limit: number; user_active: number; global_limit: number; global_active: number };
+  blocked_today: number;
+};
+
+export type AnalyticsUserUsagePayload = {
+  user_id: string;
+  quota: AnalyticsUserQuotaSummary;
+  totals: {
+    responses: number;
+    messages: number;
+    voice_seconds: number;
+    fallback_count: number;
+    errors_count: number;
+    blocked_count: number;
+    total_sessions: number;
+    total_duration_seconds: number;
+  };
+  history: AnalyticsHistoryPoint[];
+  recent_blocks: AnalyticsQuotaBlock[];
 };
 
 export type AnalyticsSessionMessage = {
@@ -124,6 +174,10 @@ export async function fetchAnalyticsLive() {
   return axios.get<AnalyticsLivePayload>('/api/analytics/live');
 }
 
+export async function fetchAnalyticsHistory(days = 14) {
+  return axios.get<{ items: AnalyticsHistoryPoint[] }>(`/api/analytics/history?days=${Math.max(1, Math.min(90, days))}`);
+}
+
 export async function fetchAnalyticsUserSessions(userId: string, limit = 20) {
   const params = new URLSearchParams({
     user_id: userId,
@@ -134,6 +188,10 @@ export async function fetchAnalyticsUserSessions(userId: string, limit = 20) {
 
 export async function fetchAnalyticsSessionDetail(sessionId: string) {
   return axios.get<AnalyticsSessionDetailPayload>(`/api/analytics/sessions/${encodeURIComponent(sessionId)}`);
+}
+
+export async function fetchAnalyticsUserUsage(userId: string, days = 14) {
+  return axios.get<AnalyticsUserUsagePayload>(`/api/analytics/users/${encodeURIComponent(userId)}/usage?days=${Math.max(1, Math.min(90, days))}`);
 }
 
 export async function savePromptConfig(

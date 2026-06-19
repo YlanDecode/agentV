@@ -1,15 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { Clock3Icon, MessageCircleIcon, MessageSquareIcon, ShieldAlertIcon, UserRoundIcon } from "lucide-react";
+import { BanIcon, Clock3Icon, MessageCircleIcon, MessageSquareIcon, ShieldAlertIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import { fetchAnalyticsUserSessions, type AnalyticsUserSessionItem } from "@/lib/agentvocal-admin-api";
+import {
+  fetchAnalyticsUserSessions,
+  fetchAnalyticsUserUsage,
+  type AnalyticsHistoryPoint,
+  type AnalyticsQuotaBlock,
+  type AnalyticsUserSessionItem,
+  type AnalyticsUserUsagePayload,
+} from "@/lib/agentvocal-admin-api";
 import { getApiErrorMessage } from "@/lib/axios";
 
 type LoadState = {
   loading: boolean;
   error: string;
-  data: { user_id: string; sessions: AnalyticsUserSessionItem[] } | null;
+  sessions: AnalyticsUserSessionItem[];
+  usage: AnalyticsUserUsagePayload | null;
 };
 
 function metric(value: number | string | null | undefined) {
@@ -49,20 +57,41 @@ function formatDuration(seconds: number) {
   return `${String(minutes).padStart(2, "0")}m ${String(remaining).padStart(2, "0")}s`;
 }
 
+function quotaReasonLabel(reason: string) {
+  switch (reason) {
+    case "max_global_concurrent_sessions_reached":
+      return "Capacite globale atteinte";
+    case "max_concurrent_sessions_per_user_reached":
+      return "Trop de sessions paralleles";
+    case "responses_per_hour_exceeded":
+      return "Trop de reponses sur 1 h";
+    case "responses_per_day_exceeded":
+      return "Quota journalier atteint";
+    case "voice_seconds_per_day_exceeded":
+      return "Temps vocal journalier atteint";
+    default:
+      return reason || "Blocage quota";
+  }
+}
+
 export function UserSessionsDashboard({ userId }: { userId: string }) {
   const [state, setState] = useState<LoadState>({
     loading: true,
     error: "",
-    data: null,
+    sessions: [],
+    usage: null,
   });
 
   useEffect(() => {
     const load = async () => {
       try {
-        const data = await fetchAnalyticsUserSessions(userId);
-        setState({ loading: false, error: "", data });
+        const [sessionsData, usageData] = await Promise.all([
+          fetchAnalyticsUserSessions(userId),
+          fetchAnalyticsUserUsage(userId),
+        ]);
+        setState({ loading: false, error: "", sessions: sessionsData.sessions ?? [], usage: usageData });
       } catch (error) {
-        setState({ loading: false, error: getApiErrorMessage(error, "Impossible de charger les sessions utilisateur."), data: null });
+        setState({ loading: false, error: getApiErrorMessage(error, "Impossible de charger les sessions utilisateur."), sessions: [], usage: null });
       }
     };
 
@@ -82,12 +111,17 @@ export function UserSessionsDashboard({ userId }: { userId: string }) {
     );
   }
 
-  const sessions = state.data?.sessions ?? [];
-  const totalMessages = sessions.reduce((acc, session) => acc + (session.message_count ?? 0), 0);
-  const totalResponses = sessions.reduce((acc, session) => acc + (session.response_count ?? 0), 0);
-  const totalFallbacks = sessions.reduce((acc, session) => acc + (session.fallback_count ?? 0), 0);
-  const totalErrors = sessions.reduce((acc, session) => acc + (session.error_count ?? 0), 0);
-  const totalDuration = sessions.reduce((acc, session) => acc + (session.duration_seconds ?? 0), 0);
+  const sessions = state.sessions;
+  const usage = state.usage;
+  const quota = usage?.quota;
+  const totals = usage?.totals;
+  const history = usage?.history ?? [];
+  const recentBlocks = usage?.recent_blocks ?? [];
+  const totalMessages = totals?.messages ?? sessions.reduce((acc, session) => acc + (session.message_count ?? 0), 0);
+  const totalResponses = totals?.responses ?? sessions.reduce((acc, session) => acc + (session.response_count ?? 0), 0);
+  const totalFallbacks = totals?.fallback_count ?? sessions.reduce((acc, session) => acc + (session.fallback_count ?? 0), 0);
+  const totalErrors = totals?.errors_count ?? sessions.reduce((acc, session) => acc + (session.error_count ?? 0), 0);
+  const totalDuration = totals?.total_duration_seconds ?? sessions.reduce((acc, session) => acc + (session.duration_seconds ?? 0), 0);
 
   return (
     <div className="space-y-6">
@@ -96,30 +130,81 @@ export function UserSessionsDashboard({ userId }: { userId: string }) {
         <p className="mt-1 text-sm text-muted-foreground">Utilisateur : {userId}</p>
 
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <SmallStat icon={MessageCircleIcon} label="Sessions" value={metric(sessions.length)} />
+          <SmallStat icon={MessageCircleIcon} label="Sessions" value={metric(totals?.total_sessions ?? sessions.length)} />
           <SmallStat icon={MessageSquareIcon} label="Messages" value={metric(totalMessages)} />
-          <SmallStat icon={Clock3Icon} label="Durée cumulée" value={formatDuration(totalDuration)} />
-          <SmallStat icon={UserRoundIcon} label="Fallback" value={metric(totalFallbacks)} />
+          <SmallStat icon={Clock3Icon} label="Duree cumulee" value={formatDuration(totalDuration)} />
+          <SmallStat icon={BanIcon} label="Blocages quota" value={metric(totals?.blocked_count ?? recentBlocks.length)} />
         </div>
 
-        <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
-          <div className="rounded-2xl border border-border/70 bg-card/50 p-3">
-            <p className="text-xs text-muted-foreground">Réponses</p>
-            <p className="mt-1 font-medium text-foreground">{metric(totalResponses)}</p>
+        <div className="mt-3 grid gap-2 text-sm md:grid-cols-3">
+          <StatCard label="Reponses" value={metric(totalResponses)} />
+          <StatCard label="Fallback" value={metric(totalFallbacks)} />
+          <StatCard label="Erreurs" value={metric(totalErrors)} />
+        </div>
+      </section>
+
+      <div className="grid gap-4 xl:grid-cols-[1fr_400px]">
+        <section className="rounded-3xl border border-border/70 bg-background/80 p-5 md:p-6">
+          <h2 className="text-lg font-semibold text-foreground">Quotas appliques</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Ce que cet utilisateur a deja consomme et ce qu'il lui reste.</p>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <QuotaCard label="Reponses / heure" used={quota?.responses_per_hour.used ?? 0} limit={quota?.responses_per_hour.limit ?? 0} remaining={quota?.responses_per_hour.remaining ?? 0} />
+            <QuotaCard label="Reponses / jour" used={quota?.responses_per_day.used ?? 0} limit={quota?.responses_per_day.limit ?? 0} remaining={quota?.responses_per_day.remaining ?? 0} />
+            <QuotaCard label="Temps vocal / jour" used={quota?.voice_seconds_per_day.used ?? 0} limit={quota?.voice_seconds_per_day.limit ?? 0} remaining={quota?.voice_seconds_per_day.remaining ?? 0} suffix="s" />
+            <QuotaCard label="Sessions paralleles" used={quota?.concurrency.user_active ?? 0} limit={quota?.concurrency.user_limit ?? 0} remaining={Math.max((quota?.concurrency.user_limit ?? 0) - (quota?.concurrency.user_active ?? 0), 0)} />
           </div>
-          <div className="rounded-2xl border border-border/70 bg-card/50 p-3">
-            <p className="text-xs text-muted-foreground">Erreurs</p>
-            <p className="mt-1 font-medium text-foreground">{metric(totalErrors)}</p>
+
+          <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
+            <StatCard label="Sessions globales actives" value={`${metric(quota?.concurrency.global_active)} / ${metric(quota?.concurrency.global_limit)}`} />
+            <StatCard label="Blocages aujourd'hui" value={metric(quota?.blocked_today)} />
           </div>
+        </section>
+
+        <section className="rounded-3xl border border-border/70 bg-background/80 p-5 md:p-6">
+          <h2 className="text-lg font-semibold text-foreground">Refus recents</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Historique exploitable des depassements de quota.</p>
+
+          {recentBlocks.length === 0 ? (
+            <p className="mt-4 text-sm text-muted-foreground">Aucun refus recent pour cet utilisateur.</p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {recentBlocks.map((block: AnalyticsQuotaBlock) => (
+                <div className="rounded-2xl border border-border bg-card/50 p-4" key={block.id}>
+                  <p className="text-sm font-medium text-foreground">{quotaReasonLabel(block.reason)}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{formatDate(block.created_at)}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
+      <section className="rounded-3xl border border-border/70 bg-background/80 p-5 md:p-6">
+        <h2 className="text-lg font-semibold text-foreground">Historique recent</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Evolution simple de l'usage pour analyse metier.</p>
+        <div className="mt-4 grid gap-2 md:grid-cols-7">
+          {history.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Aucun historique recent.</p>
+          ) : (
+            history.map((item: AnalyticsHistoryPoint) => (
+              <div className="rounded-2xl border border-border bg-card/50 px-3 py-3 text-xs text-muted-foreground" key={item.bucket}>
+                <p className="font-medium text-foreground">{item.label}</p>
+                <p className="mt-1">{item.responses} reponses</p>
+                <p>{item.sessions} sessions</p>
+                <p>{item.blocked_count} blocage(s)</p>
+              </div>
+            ))
+          )}
         </div>
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-foreground">Sessions trouvées</h2>
+        <h2 className="text-lg font-semibold text-foreground">Sessions trouvees</h2>
         <p className="text-sm text-muted-foreground">Cliquez sur une session pour ouvrir le transcript.</p>
 
         {sessions.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Aucune session liée à cet utilisateur.</p>
+          <p className="text-sm text-muted-foreground">Aucune session liee a cet utilisateur.</p>
         ) : (
           <div className="space-y-3">
             {sessions.map((session) => (
@@ -132,7 +217,7 @@ export function UserSessionsDashboard({ userId }: { userId: string }) {
                   <div className="space-y-1">
                     <p className="text-sm font-semibold text-foreground">Session {session.session_id}</p>
                     <p className="text-xs text-muted-foreground">
-                      Démarrée {formatDate(session.started_at)} · canal {session.channel || "-"} · mode {session.mode || "-"}
+                      Demarree {formatDate(session.started_at)} · canal {session.channel || "-"} · mode {session.mode || "-"}
                     </p>
                   </div>
                   <span className="rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-muted-foreground">
@@ -142,10 +227,10 @@ export function UserSessionsDashboard({ userId }: { userId: string }) {
 
                 <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
                   <div className="rounded-2xl border border-border/70 bg-card/50 px-3 py-2 text-xs text-muted-foreground">
-                    <span className="text-foreground">Durée :</span> {formatDuration(session.duration_seconds)}
+                    <span className="text-foreground">Duree :</span> {formatDuration(session.duration_seconds)}
                   </div>
                   <div className="rounded-2xl border border-border/70 bg-card/50 px-3 py-2 text-xs text-muted-foreground">
-                    <span className="text-foreground">Messages :</span> {metric(session.message_count)} · réponses {metric(session.response_count)}
+                    <span className="text-foreground">Messages :</span> {metric(session.message_count)} · reponses {metric(session.response_count)}
                   </div>
                   <div className="rounded-2xl border border-border/70 bg-card/50 px-3 py-2 text-xs text-muted-foreground">
                     <span className="text-foreground">Fallback :</span> {metric(session.fallback_count)} · erreurs {metric(session.error_count)}
@@ -157,7 +242,7 @@ export function UserSessionsDashboard({ userId }: { userId: string }) {
 
                 {session.review_reason ? (
                   <p className="mt-2 flex items-start gap-2 text-xs text-amber-600">
-                    <ShieldAlertIcon className="size-3.5 mt-0.5" />
+                    <ShieldAlertIcon className="mt-0.5 size-3.5" />
                     <span>{session.review_reason}</span>
                   </p>
                 ) : null}
@@ -178,6 +263,41 @@ function SmallStat({ icon: Icon, label, value }: { icon: typeof Clock3Icon; labe
         {label}
       </div>
       <p className="mt-2 text-lg font-semibold text-foreground">{value}</p>
+    </div>
+  );
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-border/70 bg-card/50 p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 font-medium text-foreground">{value}</p>
+    </div>
+  );
+}
+
+function QuotaCard({
+  label,
+  used,
+  limit,
+  remaining,
+  suffix = "",
+}: {
+  label: string;
+  used: number;
+  limit: number;
+  remaining: number;
+  suffix?: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-border bg-card/60 p-4">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-2 text-lg font-semibold text-foreground">
+        {used}
+        {suffix} / {limit}
+        {suffix}
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">Reste {remaining}{suffix}</p>
     </div>
   );
 }
