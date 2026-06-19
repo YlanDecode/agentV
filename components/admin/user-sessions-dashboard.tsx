@@ -1,13 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { BanIcon, Clock3Icon, MessageCircleIcon, MessageSquareIcon, ShieldAlertIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { BanIcon, ChevronDownIcon, ChevronUpIcon, Clock3Icon, MessageCircleIcon, MessageSquareIcon, ShieldAlertIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import {
+  fetchAnalyticsSessionDetail,
   fetchAnalyticsUserSessions,
   fetchAnalyticsUserUsage,
   type AnalyticsHistoryPoint,
   type AnalyticsQuotaBlock,
+  type AnalyticsSessionMessage,
   type AnalyticsUserSessionItem,
   type AnalyticsUserUsagePayload,
 } from "@/lib/agentvocal-admin-api";
@@ -81,6 +83,9 @@ export function UserSessionsDashboard({ userId }: { userId: string }) {
     sessions: [],
     usage: null,
   });
+  const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
+  const [transcripts, setTranscripts] = useState<Record<string, { loading: boolean; messages: AnalyticsSessionMessage[]; error: string }>>({});
+  const loadingRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const load = async () => {
@@ -97,6 +102,33 @@ export function UserSessionsDashboard({ userId }: { userId: string }) {
 
     void load();
   }, [userId]);
+
+  const toggleSession = (sessionId: string) => {
+    setExpandedSessions((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) {
+        next.delete(sessionId);
+        return next;
+      }
+      next.add(sessionId);
+      return next;
+    });
+
+    if (!transcripts[sessionId] && !loadingRef.current.has(sessionId)) {
+      loadingRef.current.add(sessionId);
+      setTranscripts((prev) => ({ ...prev, [sessionId]: { loading: true, messages: [], error: "" } }));
+      fetchAnalyticsSessionDetail(sessionId)
+        .then((data) => {
+          setTranscripts((prev) => ({ ...prev, [sessionId]: { loading: false, messages: data.messages ?? [], error: "" } }));
+        })
+        .catch((err) => {
+          setTranscripts((prev) => ({ ...prev, [sessionId]: { loading: false, messages: [], error: getApiErrorMessage(err, "Impossible de charger le transcript.") } }));
+        })
+        .finally(() => {
+          loadingRef.current.delete(sessionId);
+        });
+    }
+  };
 
   if (state.loading) {
     return <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{[1, 2, 3].map((item) => <div className="h-28 animate-pulse rounded-3xl bg-card/60" key={item} />)}</div>;
@@ -207,47 +239,110 @@ export function UserSessionsDashboard({ userId }: { userId: string }) {
           <p className="text-sm text-muted-foreground">Aucune session liee a cet utilisateur.</p>
         ) : (
           <div className="space-y-3">
-            {sessions.map((session) => (
-              <Link
-                className="group block rounded-3xl border border-border bg-background/80 p-4 transition-colors hover:border-foreground/30 hover:bg-card"
-                href={`/admin/analytics/sessions/${encodeURIComponent(session.session_id)}`}
-                key={session.session_id}
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <p className="text-sm font-semibold text-foreground">Session {session.session_id}</p>
-                    <p className="text-xs text-muted-foreground">
-                      Demarree {formatDate(session.started_at)} · canal {session.channel || "-"} · mode {session.mode || "-"}
-                    </p>
-                  </div>
-                  <span className="rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-muted-foreground">
-                    {session.status}
-                  </span>
-                </div>
+            {sessions.map((session) => {
+              const isExpanded = expandedSessions.has(session.session_id);
+              const transcript = transcripts[session.session_id];
+              return (
+                <div
+                  className="rounded-3xl border border-border bg-background/80 transition-colors"
+                  key={session.session_id}
+                >
+                  <button
+                    className="w-full p-4 text-left"
+                    onClick={() => toggleSession(session.session_id)}
+                    type="button"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="space-y-1">
+                        <p className="text-sm font-semibold text-foreground">Session {session.session_id}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Demarree {formatDate(session.started_at)} · canal {session.channel || "-"} · mode {session.mode || "-"}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-muted-foreground">
+                          {session.status}
+                        </span>
+                        {isExpanded ? (
+                          <ChevronUpIcon className="size-4 text-muted-foreground" />
+                        ) : (
+                          <ChevronDownIcon className="size-4 text-muted-foreground" />
+                        )}
+                      </div>
+                    </div>
 
-                <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
-                  <div className="rounded-2xl border border-border/70 bg-card/50 px-3 py-2 text-xs text-muted-foreground">
-                    <span className="text-foreground">Duree :</span> {formatDuration(session.duration_seconds)}
-                  </div>
-                  <div className="rounded-2xl border border-border/70 bg-card/50 px-3 py-2 text-xs text-muted-foreground">
-                    <span className="text-foreground">Messages :</span> {metric(session.message_count)} · reponses {metric(session.response_count)}
-                  </div>
-                  <div className="rounded-2xl border border-border/70 bg-card/50 px-3 py-2 text-xs text-muted-foreground">
-                    <span className="text-foreground">Fallback :</span> {metric(session.fallback_count)} · erreurs {metric(session.error_count)}
-                  </div>
-                  <div className="rounded-2xl border border-border/70 bg-card/50 px-3 py-2 text-xs text-muted-foreground">
-                    <span className="text-foreground">Review :</span> {session.needs_review ? "oui" : "non"}
-                  </div>
-                </div>
+                    <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
+                      <div className="rounded-2xl border border-border/70 bg-card/50 px-3 py-2 text-xs text-muted-foreground">
+                        <span className="text-foreground">Duree :</span> {formatDuration(session.duration_seconds)}
+                      </div>
+                      <div className="rounded-2xl border border-border/70 bg-card/50 px-3 py-2 text-xs text-muted-foreground">
+                        <span className="text-foreground">Messages :</span> {metric(session.message_count)} · reponses {metric(session.response_count)}
+                      </div>
+                      <div className="rounded-2xl border border-border/70 bg-card/50 px-3 py-2 text-xs text-muted-foreground">
+                        <span className="text-foreground">Fallback :</span> {metric(session.fallback_count)} · erreurs {metric(session.error_count)}
+                      </div>
+                      <div className="rounded-2xl border border-border/70 bg-card/50 px-3 py-2 text-xs text-muted-foreground">
+                        <span className="text-foreground">Review :</span> {session.needs_review ? "oui" : "non"}
+                      </div>
+                    </div>
 
-                {session.review_reason ? (
-                  <p className="mt-2 flex items-start gap-2 text-xs text-amber-600">
-                    <ShieldAlertIcon className="mt-0.5 size-3.5" />
-                    <span>{session.review_reason}</span>
-                  </p>
-                ) : null}
-              </Link>
-            ))}
+                    {session.review_reason ? (
+                      <p className="mt-2 flex items-start gap-2 text-xs text-amber-600">
+                        <ShieldAlertIcon className="mt-0.5 size-3.5" />
+                        <span>{session.review_reason}</span>
+                      </p>
+                    ) : null}
+                  </button>
+
+                  {isExpanded ? (
+                    <div className="border-t border-border/70 px-4 pb-4 pt-3">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <p className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Echanges</p>
+                        <Link
+                          className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground hover:bg-foreground hover:text-background"
+                          href={`/admin/analytics/sessions/${encodeURIComponent(session.session_id)}`}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          Voir detail complet
+                        </Link>
+                      </div>
+
+                      {transcript?.loading ? (
+                        <div className="space-y-2">
+                          <div className="h-12 animate-pulse rounded-2xl bg-card/60" />
+                          <div className="h-12 animate-pulse rounded-2xl bg-card/60" />
+                        </div>
+                      ) : transcript?.error ? (
+                        <p className="text-xs text-amber-600">{transcript.error}</p>
+                      ) : transcript?.messages.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">Aucun message stocke pour cette session.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {(transcript?.messages ?? [])
+                            .filter((m) => m.role === "user" || m.role === "assistant")
+                            .map((message) => (
+                              <div
+                                className={`rounded-2xl border px-3 py-2 text-sm ${
+                                  message.role === "user"
+                                    ? "border-blue-500/20 bg-blue-500/5"
+                                    : "border-emerald-500/20 bg-emerald-500/5"
+                                }`}
+                                key={message.id}
+                              >
+                                <p className={`mb-1 text-xs font-medium ${message.role === "user" ? "text-blue-600 dark:text-blue-300" : "text-emerald-600 dark:text-emerald-300"}`}>
+                                  {message.role === "user" ? "Utilisateur" : "Agent"}
+                                </p>
+                                <p className="whitespace-pre-wrap wrap-break-word text-foreground">{message.content}</p>
+                                <p className="mt-1 text-xs text-muted-foreground">{formatDate(message.created_at)}</p>
+                              </div>
+                            ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         )}
       </section>
