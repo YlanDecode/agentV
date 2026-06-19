@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { BotIcon } from "lucide-react";
 import { AdminNav, AdminNavMobile } from "@/components/admin/admin-nav";
@@ -21,10 +22,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   </p>
                 </div>
                 </div>
-                <AdminNavMobile />
+                <Suspense fallback={<div className="h-10 w-36 rounded-full bg-card/60" />}>
+                  <AdminNavMobile />
+                </Suspense>
               </div>
 
-              <AdminNav />
+              <Suspense fallback={<div className="hidden h-11 w-full rounded-full bg-card/60 md:block" />}>
+                <AdminNav />
+              </Suspense>
             </div>
 
             <div className="flex items-center gap-2 self-start lg:self-end">
