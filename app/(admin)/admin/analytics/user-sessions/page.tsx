@@ -2,6 +2,8 @@ import Link from "next/link";
 import { ArrowLeftIcon, UserRoundIcon } from "lucide-react";
 import { UserSessionsDashboard } from "@/components/admin/user-sessions-dashboard";
 
+export const dynamic = "force-dynamic";
+
 type SearchParams = {
   [key: string]: string | string[] | undefined;
 };
