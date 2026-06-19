@@ -351,7 +351,7 @@ export async function POST(request: Request) {
               writer.write({ type: "text-start", id: assistantMessageId });
               const result = await requestAgentVocalTextResponse({
                 chatId: id,
-                messages: history,
+                messages: [...history, { role: "user" as const, content: text }],
                 userName: displayName,
               });
               assistantText = result.text;
@@ -478,7 +478,7 @@ export async function POST(request: Request) {
             writer.write({ type: "text-start", id: assistantMessageId });
             const result = await requestAgentVocalTextResponse({
               chatId: id,
-              messages: history,
+              messages: [...history, { role: "user" as const, content: text }],
               userName: displayName,
             });
             assistantText = result.text;
