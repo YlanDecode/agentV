@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { ArrowLeftIcon, MessageCircleIcon } from "lucide-react";
 import { SessionTranscript } from "@/components/admin/session-transcript";
@@ -5,17 +6,15 @@ import { SessionTranscript } from "@/components/admin/session-transcript";
 type SessionDetailPageProps = {
   params: Promise<{
     sessionId: string;
-  }> | {
-    sessionId: string;
-  };
+  }>;
 };
 
-export default async function SessionDetailPage({ params }: SessionDetailPageProps) {
+async function SessionDetailContent({ params }: SessionDetailPageProps) {
   const resolvedParams = await params;
   const sessionId = decodeURIComponent((resolvedParams.sessionId || "").trim());
 
   return (
-    <div className="space-y-8">
+    <>
       <section className="rounded-3xl border border-border/70 bg-card/70 p-6 shadow-sm md:p-8">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div className="max-w-2xl space-y-3">
@@ -44,6 +43,16 @@ export default async function SessionDetailPage({ params }: SessionDetailPagePro
       <section className="rounded-3xl border border-border/70 bg-background/80 p-4 md:p-6">
         <SessionTranscript sessionId={sessionId} />
       </section>
+    </>
+  );
+}
+
+export default function SessionDetailPage({ params }: SessionDetailPageProps) {
+  return (
+    <div className="space-y-8">
+      <Suspense fallback={<div className="h-28 animate-pulse rounded-3xl bg-card/60" />}>
+        <SessionDetailContent params={params} />
+      </Suspense>
     </div>
   );
 }
