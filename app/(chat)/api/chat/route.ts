@@ -374,6 +374,16 @@ export async function POST(request: Request) {
               }
 
               try {
+                await trackAgentVocalTextTurn({
+                  chatId: id,
+                  userText: text,
+                  assistantText,
+                  userName: displayName,
+                  metadata: {
+                    source: "agentvocal-anonymous",
+                    model: "agentvocal",
+                  },
+                });
                 await saveConversationToSupabase({
                   sessionId: id,
                   userName: displayName,
@@ -457,6 +467,7 @@ export async function POST(request: Request) {
       }
 
       if (isAgentVocalEnabled()) {
+        const trackedUserId = session?.user?.id ?? undefined;
         const history = (conversationMessages ?? []).flatMap((currentMessage) => {
           const textContent = currentMessage.parts
             .filter((part) => "type" in part && part.type === "text")
@@ -501,6 +512,17 @@ export async function POST(request: Request) {
             }
 
             try {
+              await trackAgentVocalTextTurn({
+                chatId: id,
+                userText: text,
+                assistantText,
+                userId: trackedUserId,
+                userName: displayName,
+                metadata: {
+                  source: "agentvocal-authenticated",
+                  model: "agentvocal",
+                },
+              });
               await saveConversationToSupabase({
                 sessionId: id,
                 userName: displayName,
