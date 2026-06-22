@@ -1,6 +1,6 @@
 import { agentVocalFetch, isAgentVocalEnabled } from '@/lib/backend/agentvocal';
 
-export async function GET() {
+export async function GET(request: Request) {
   if (!isAgentVocalEnabled()) {
     return Response.json(
       { error: 'AGENTVOCAL_API_BASE_URL and AGENTVOCAL_API_KEY must be configured' },
@@ -9,7 +9,8 @@ export async function GET() {
   }
 
   try {
-    const response = await agentVocalFetch('/analytics/live');
+    const search = new URL(request.url).searchParams.toString();
+    const response = await agentVocalFetch(search ? `/analytics/live?${search}` : '/analytics/live');
     const body = await response.text();
     return new Response(body, {
       status: response.status,

@@ -1,14 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { BanIcon, BotIcon, Clock3Icon, RadioTowerIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { BanIcon, BotIcon, Clock3Icon, FilterIcon, MessageSquareIcon, RadioTowerIcon, UserRoundIcon, WavesIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import {
   fetchAnalyticsDashboard,
   fetchAnalyticsLive,
+  type AnalyticsDashboardFilters,
   type AnalyticsDashboardPayload,
   type AnalyticsHistoryPoint,
+  type AnalyticsLiveMessage,
   type AnalyticsLivePayload,
+  type AnalyticsLiveSession,
   type AnalyticsQuotaBlock,
 } from "@/lib/agentvocal-admin-api";
 import { getApiErrorMessage } from "@/lib/axios";
@@ -18,6 +21,9 @@ type LoadState = {
   error: string;
   data: AnalyticsDashboardPayload | null;
 };
+
+type LiveModeFilter = "all" | "text" | "voice";
+type LiveAudienceFilter = "all" | "identified" | "anonymous";
 
 function metric(value: unknown) {
   if (value === null || value === undefined || value === "") {
@@ -62,6 +68,29 @@ function formatDate(value?: string | null) {
   }).format(date);
 }
 
+function formatRelativeTime(value?: string | null) {
+  if (!value) {
+    return "jamais";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "recent";
+  }
+
+  const diffSeconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  if (diffSeconds < 10) {
+    return "a l'instant";
+  }
+  if (diffSeconds < 60) {
+    return `il y a ${diffSeconds}s`;
+  }
+  if (diffSeconds < 3600) {
+    return `il y a ${Math.floor(diffSeconds / 60)} min`;
+  }
+  return formatDate(value);
+}
+
 function quotaReasonLabel(reason: string) {
   switch (reason) {
     case "max_global_concurrent_sessions_reached":
@@ -79,18 +108,58 @@ function quotaReasonLabel(reason: string) {
   }
 }
 
+function buildAnalyticsQuery(filters: AnalyticsDashboardFilters) {
+  const params = new URLSearchParams();
+  params.set("days", String(filters.days ?? 14));
+  if (filters.mode && filters.mode !== "all") {
+    params.set("mode", filters.mode);
+  }
+  if (filters.audience && filters.audience !== "all") {
+    params.set("audience", filters.audience);
+  }
+  if (filters.channel && filters.channel !== "all") {
+    params.set("channel", filters.channel);
+  }
+  return params.toString();
+}
+
 export function InsightsDashboard() {
   const [state, setState] = useState<LoadState>({ loading: true, error: "", data: null });
+  const [daysFilter, setDaysFilter] = useState(14);
+  const [modeFilter, setModeFilter] = useState<LiveModeFilter>("all");
+  const [audienceFilter, setAudienceFilter] = useState<LiveAudienceFilter>("all");
+  const [channelFilter, setChannelFilter] = useState("all");
+  const [freshSessionIds, setFreshSessionIds] = useState<string[]>([]);
+  const [freshMessageIds, setFreshMessageIds] = useState<string[]>([]);
+  const [lastLiveUpdateAt, setLastLiveUpdateAt] = useState<string | null>(null);
+  const previousSessionIdsRef = useRef<string[]>([]);
+  const previousMessageIdsRef = useRef<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
+    let highlightTimeout: number | null = null;
+    let liveFallbackInterval: number | null = null;
+    let liveEventSource: EventSource | null = null;
+    const filters: AnalyticsDashboardFilters = {
+      days: daysFilter,
+      mode: modeFilter,
+      audience: audienceFilter,
+      channel: channelFilter,
+    };
 
     const loadDashboard = async () => {
       try {
-        const data = await fetchAnalyticsDashboard();
+        const data = await fetchAnalyticsDashboard(filters);
         if (cancelled) {
           return;
         }
+        previousSessionIdsRef.current = Array.isArray(data.live?.sessions) ? data.live.sessions.map((item) => item.session_id) : [];
+        previousMessageIdsRef.current = Array.isArray(data.live?.messages)
+          ? data.live.messages.map((item) => `${item.id}-${item.created_at}`)
+          : [];
+        setFreshSessionIds([]);
+        setFreshMessageIds([]);
+        setLastLiveUpdateAt(new Date().toISOString());
         setState({ loading: false, error: "", data });
       } catch (error) {
         if (cancelled) {
@@ -101,6 +170,23 @@ export function InsightsDashboard() {
     };
 
     const patchLive = (live: AnalyticsLivePayload) => {
+      const nextSessionIds = Array.isArray(live.sessions) ? live.sessions.map((item) => item.session_id) : [];
+      const nextMessageIds = Array.isArray(live.messages) ? live.messages.map((item) => `${item.id}-${item.created_at}`) : [];
+      const nextFreshSessionIds = nextSessionIds.filter((id) => !previousSessionIdsRef.current.includes(id));
+      const nextFreshMessageIds = nextMessageIds.filter((id) => !previousMessageIdsRef.current.includes(id));
+      previousSessionIdsRef.current = nextSessionIds;
+      previousMessageIdsRef.current = nextMessageIds;
+      setFreshSessionIds(nextFreshSessionIds);
+      setFreshMessageIds(nextFreshMessageIds);
+      setLastLiveUpdateAt(new Date().toISOString());
+      if (highlightTimeout) {
+        window.clearTimeout(highlightTimeout);
+      }
+      highlightTimeout = window.setTimeout(() => {
+        setFreshSessionIds([]);
+        setFreshMessageIds([]);
+      }, 7000);
+
       setState((current) => {
         if (!current.data) {
           return current;
@@ -116,6 +202,9 @@ export function InsightsDashboard() {
               active_sessions: live.active_sessions,
               active_voice_sessions: live.active_voice_sessions,
               active_text_sessions: live.active_text_sessions,
+              active_users: live.active_users,
+              active_anonymous_users: live.active_anonymous_users,
+              active_identified_users: live.active_identified_users,
               peak_concurrent_sessions_today: live.peak_concurrent_sessions_today,
             },
           },
@@ -125,7 +214,7 @@ export function InsightsDashboard() {
 
     const loadLive = async () => {
       try {
-        const live = await fetchAnalyticsLive();
+        const live = await fetchAnalyticsLive(filters);
         if (!cancelled) {
           patchLive(live);
         }
@@ -134,20 +223,63 @@ export function InsightsDashboard() {
       }
     };
 
+    const stopFallbackPolling = () => {
+      if (liveFallbackInterval) {
+        window.clearInterval(liveFallbackInterval);
+        liveFallbackInterval = null;
+      }
+    };
+
+    const startFallbackPolling = () => {
+      if (liveFallbackInterval) {
+        return;
+      }
+      liveFallbackInterval = window.setInterval(() => {
+        void loadLive();
+      }, 5000);
+    };
+
+    const startLiveStream = () => {
+      const query = buildAnalyticsQuery(filters);
+      liveEventSource = new EventSource(query ? `/api/analytics/live/stream?${query}` : "/api/analytics/live/stream");
+      liveEventSource.addEventListener("live", (event) => {
+        stopFallbackPolling();
+        try {
+          const live = JSON.parse((event as MessageEvent).data) as AnalyticsLivePayload;
+          if (!cancelled) {
+            patchLive(live);
+          }
+        } catch {
+          // Ignore malformed event payloads and keep the stream alive.
+        }
+      });
+      liveEventSource.onerror = () => {
+        if (liveEventSource) {
+          liveEventSource.close();
+          liveEventSource = null;
+        }
+        startFallbackPolling();
+      };
+    };
+
     void loadDashboard();
-    const liveInterval = window.setInterval(() => {
-      void loadLive();
-    }, 5000);
+    startLiveStream();
     const dashboardInterval = window.setInterval(() => {
       void loadDashboard();
     }, 15000);
 
     return () => {
       cancelled = true;
-      window.clearInterval(liveInterval);
       window.clearInterval(dashboardInterval);
+      stopFallbackPolling();
+      if (liveEventSource) {
+        liveEventSource.close();
+      }
+      if (highlightTimeout) {
+        window.clearTimeout(highlightTimeout);
+      }
     };
-  }, []);
+  }, [daysFilter, modeFilter, audienceFilter, channelFilter]);
 
   if (state.loading) {
     return (
@@ -177,25 +309,90 @@ export function InsightsDashboard() {
   const problemSessions = state.data?.problem_sessions ?? [];
   const history = state.data?.activity_history ?? [];
   const quotaBlocks = state.data?.quota_blocks ?? [];
+  const live = (state.data?.live ?? {}) as AnalyticsLivePayload;
+  const liveSessions = Array.isArray(live.sessions) ? live.sessions : [];
+  const liveMessages = Array.isArray(live.messages) ? live.messages : [];
+  const channelOptions = Array.from(new Set([...(channelFilter !== "all" ? [channelFilter] : []), ...liveSessions.map((item) => String(item.channel || "web"))]));
+  const filteredSessions = liveSessions.filter((item) => {
+    if (modeFilter !== "all" && item.mode !== modeFilter) {
+      return false;
+    }
+    if (audienceFilter === "identified" && item.is_anonymous) {
+      return false;
+    }
+    if (audienceFilter === "anonymous" && !item.is_anonymous) {
+      return false;
+    }
+    if (channelFilter !== "all" && item.channel !== channelFilter) {
+      return false;
+    }
+    return true;
+  }).sort((left, right) => {
+    const leftFresh = freshSessionIds.includes(left.session_id) ? 1 : 0;
+    const rightFresh = freshSessionIds.includes(right.session_id) ? 1 : 0;
+    if (leftFresh !== rightFresh) {
+      return rightFresh - leftFresh;
+    }
+    const leftScore = left.response_count + left.message_count + left.fallback_count * 2 + left.error_count * 3;
+    const rightScore = right.response_count + right.message_count + right.fallback_count * 2 + right.error_count * 3;
+    if (leftScore !== rightScore) {
+      return rightScore - leftScore;
+    }
+    return String(right.last_activity_at || "").localeCompare(String(left.last_activity_at || ""));
+  });
+  const filteredMessages = liveMessages.filter((item) => {
+    if (modeFilter !== "all" && item.mode !== modeFilter) {
+      return false;
+    }
+    if (audienceFilter === "identified" && item.is_anonymous) {
+      return false;
+    }
+    if (audienceFilter === "anonymous" && !item.is_anonymous) {
+      return false;
+    }
+    if (channelFilter !== "all" && item.channel !== channelFilter) {
+      return false;
+    }
+    return true;
+  });
   const today = history.at(-1);
 
   return (
     <div className="space-y-6">
+      <Panel title="Perimetre" subtitle="La periode et les filtres recalculent les KPI, les listes et le graphique cote serveur.">
+        <div className="flex flex-wrap gap-2">
+          {[1, 7, 14, 30].map((days) => (
+            <FilterChip active={daysFilter === days} key={days} onClick={() => setDaysFilter(days)}>
+              {days}j
+            </FilterChip>
+          ))}
+        </div>
+      </Panel>
+
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard icon={BotIcon} label="Conversations aujourd'hui" value={metric(summary.sessions_today)} helper="Sessions ouvertes dans la journee" />
-        <MetricCard icon={RadioTowerIcon} label="Appels simultanes maintenant" value={metric(summary.active_sessions)} helper="Mise a jour toutes les 5 s" />
-        <MetricCard icon={Clock3Icon} label="Temps total d'usage" value={formatDuration(toNumber(summary.total_duration_seconds))} helper="Cumule des sessions du jour" />
-        <MetricCard icon={BanIcon} label="Blocages quota aujourd'hui" value={metric(quota.blocks_today)} helper={quotaReasonLabel(String(quota.most_common_reason || ""))} />
+        <MetricCard icon={BotIcon} label="Conversations sur la periode" value={metric(summary.sessions_today)} helper={`${metric(daysFilter)} jour(s) analyses`} />
+        <MetricCard icon={RadioTowerIcon} label="Sessions visibles maintenant" value={metric(summary.active_sessions)} helper={`Fenetre glissante ${metric(live.window_minutes ?? 5)} min`} />
+        <MetricCard icon={Clock3Icon} label="Temps total d'usage" value={formatDuration(toNumber(summary.total_duration_seconds))} helper={`Cumule sur ${metric(daysFilter)} jour(s)`} />
+        <MetricCard icon={BanIcon} label="Blocages quota periode" value={metric(quota.blocks_today)} helper={quotaReasonLabel(String(quota.most_common_reason || ""))} />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <MetricCard icon={UserRoundIcon} label="Utilisateurs actifs" value={metric(summary.active_users)} helper={`${metric(summary.active_identified_users)} identifies · ${metric(summary.active_anonymous_users)} anonymes`} />
+        <MetricCard icon={WavesIcon} label="Sessions vocales live" value={metric(summary.active_voice_sessions)} helper="Websocket et activite recente" />
+        <MetricCard icon={MessageSquareIcon} label="Sessions texte live" value={metric(summary.active_text_sessions)} helper="Derniers messages detectes" />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-        <Panel title="Graphique d'usage" subtitle="Visualise l'activite des 14 derniers jours pour comprendre les volumes et les incidents.">
+        <Panel title="Graphique d'usage" subtitle={`Visualise l'activite des ${metric(daysFilter)} derniers jours pour comprendre les volumes et les incidents.`}>
           <UsageChart data={history} />
         </Panel>
 
-        <Panel title="Charge en direct" subtitle="Sait quand l'agent approche de ses limites operationnelles.">
+        <Panel title="Charge en direct" subtitle="Sait quand l'agent approche de ses limites operationnelles selon les filtres actifs.">
           <div className="grid gap-3 text-sm text-muted-foreground">
             <InfoRow label="Sessions actives maintenant" value={metric(summary.active_sessions)} />
+            <InfoRow label="Utilisateurs actifs maintenant" value={metric(summary.active_users)} />
+            <InfoRow label="Anonymes actifs" value={metric(summary.active_anonymous_users)} />
+            <InfoRow label="Identifies actifs" value={metric(summary.active_identified_users)} />
             <InfoRow label="Sessions voix actives" value={metric(summary.active_voice_sessions)} />
             <InfoRow label="Sessions texte actives" value={metric(summary.active_text_sessions)} />
             <InfoRow label="Pic simultane du jour" value={metric(summary.peak_concurrent_sessions_today)} />
@@ -205,6 +402,45 @@ export function InsightsDashboard() {
           </div>
         </Panel>
       </div>
+
+      <Panel title="Cockpit live" subtitle="Sessions et messages recents. Les filtres s'appliquent sans recharger la page.">
+        <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            <FilterIcon className="size-3.5" />
+            Filtres dynamiques
+          </div>
+          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-300">
+            <span className="size-2 rounded-full bg-emerald-400" />
+            Live {lastLiveUpdateAt ? formatRelativeTime(lastLiveUpdateAt) : "en attente"}
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs">
+            {freshSessionIds.length > 0 ? <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-3 py-1 text-sky-300">+{freshSessionIds.length} session(s)</span> : null}
+            {freshMessageIds.length > 0 ? <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-emerald-300">+{freshMessageIds.length} message(s)</span> : null}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <FilterChip active={modeFilter === "all"} onClick={() => setModeFilter("all")}>Tout</FilterChip>
+            <FilterChip active={modeFilter === "text"} onClick={() => setModeFilter("text")}>Texte</FilterChip>
+            <FilterChip active={modeFilter === "voice"} onClick={() => setModeFilter("voice")}>Vocal</FilterChip>
+            <FilterChip active={audienceFilter === "all"} onClick={() => setAudienceFilter("all")}>Tous</FilterChip>
+            <FilterChip active={audienceFilter === "identified"} onClick={() => setAudienceFilter("identified")}>Identifies</FilterChip>
+            <FilterChip active={audienceFilter === "anonymous"} onClick={() => setAudienceFilter("anonymous")}>Anonymes</FilterChip>
+          </div>
+        </div>
+
+        <div className="mb-5 flex flex-wrap gap-2">
+          <FilterChip active={channelFilter === "all"} onClick={() => setChannelFilter("all")}>Tous canaux</FilterChip>
+          {channelOptions.map((channel) => (
+            <FilterChip active={channelFilter === channel} key={channel} onClick={() => setChannelFilter(channel)}>
+              {channel}
+            </FilterChip>
+          ))}
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+          <LiveSessionsList highlightedIds={freshSessionIds} items={filteredSessions} />
+          <LiveMessagesList highlightedIds={freshMessageIds} items={filteredMessages} />
+        </div>
+      </Panel>
 
       <div className="grid gap-4 xl:grid-cols-3">
         <Panel title="Ce qui cloche" subtitle="Questions sans bonne couverture, erreurs et sessions a revoir.">
@@ -257,7 +493,7 @@ export function InsightsDashboard() {
           />
         </Panel>
 
-        <Panel title="Resume du jour" subtitle="Version simple pour une lecture non technique.">
+        <Panel title="Resume de la periode" subtitle="Version simple pour une lecture non technique.">
           <div className="space-y-3 text-sm text-muted-foreground">
             <InfoRow label="Messages traites" value={metric(today?.messages ?? summary.responses_today)} />
             <InfoRow label="Reponses produites" value={metric(today?.responses ?? summary.responses_today)} />
@@ -363,6 +599,97 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between gap-4 rounded-2xl border border-border bg-card/50 px-3 py-3">
       <span>{label}</span>
       <span className="font-medium text-foreground">{value}</span>
+    </div>
+  );
+}
+
+function FilterChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+        active
+          ? "border-foreground bg-foreground text-background"
+          : "border-border bg-card/60 text-muted-foreground hover:border-foreground/30 hover:text-foreground"
+      }`}
+      onClick={onClick}
+      type="button"
+    >
+      {children}
+    </button>
+  );
+}
+
+function LiveSessionsList({ items, highlightedIds }: { items: AnalyticsLiveSession[]; highlightedIds: string[] }) {
+  if (items.length === 0) {
+    return <p className="text-sm text-muted-foreground">Aucune session ne correspond aux filtres en ce moment.</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {items.map((item) => {
+        const userLabel = item.is_anonymous ? "Anonyme" : item.user_id || "Utilisateur";
+        const isHighlighted = highlightedIds.includes(item.session_id);
+        return (
+          <div className={`rounded-2xl border bg-card/50 p-4 transition-all ${isHighlighted ? "border-emerald-400/60 shadow-[0_0_0_1px_rgba(74,222,128,0.25)]" : "border-border"}`} key={item.session_id}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-foreground">{item.session_id}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{userLabel} · {item.channel} · {item.mode}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {isHighlighted ? <span className="rounded-full bg-sky-500/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-300">nouveau</span> : null}
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${item.session_state === "active" ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-300"}`}>
+                  {item.session_state === "active" ? "en cours" : "recent"}
+                </span>
+              </div>
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              <InfoRow label="Derniere activite" value={formatRelativeTime(item.last_activity_at)} />
+              <InfoRow label="Messages / reponses" value={`${metric(item.message_count)} / ${metric(item.response_count)}`} />
+              <InfoRow label="Fallback" value={metric(item.fallback_count)} />
+              <InfoRow label="Erreurs" value={metric(item.error_count)} />
+            </div>
+            <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
+              <span>Debut: {formatDate(item.started_at)}</span>
+              <span>Maj: {formatDate(item.last_activity_at)}</span>
+            </div>
+            <Link className="mt-3 inline-flex text-xs font-medium text-foreground underline underline-offset-2" href={`/admin/analytics/sessions/${encodeURIComponent(item.session_id)}`}>
+              Ouvrir la session
+            </Link>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function LiveMessagesList({ items, highlightedIds }: { items: AnalyticsLiveMessage[]; highlightedIds: string[] }) {
+  if (items.length === 0) {
+    return <p className="text-sm text-muted-foreground">Aucun message recent ne correspond aux filtres.</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {items.map((item) => {
+        const itemKey = `${item.id}-${item.created_at}`;
+        const isHighlighted = highlightedIds.includes(itemKey);
+        return (
+          <div className={`rounded-2xl border bg-card/50 p-4 transition-all ${isHighlighted ? "border-sky-400/60 shadow-[0_0_0_1px_rgba(56,189,248,0.25)]" : "border-border"}`} key={itemKey}>
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+              <span>{item.role} · {item.mode} · {item.channel}</span>
+              <div className="flex items-center gap-2">
+                {isHighlighted ? <span className="rounded-full bg-sky-500/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-300">nouveau</span> : null}
+                <span>{formatRelativeTime(item.created_at)}</span>
+              </div>
+            </div>
+            <p className="mt-3 text-sm leading-6 text-foreground">{item.content}</p>
+            <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
+              <span>{item.is_anonymous ? "Anonyme" : item.user_id || "Utilisateur"}</span>
+              {item.session_id ? <span>Session: {item.session_id}</span> : null}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

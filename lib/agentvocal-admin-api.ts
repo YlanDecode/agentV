@@ -48,11 +48,54 @@ export type AnalyticsDashboardPayload = {
   quota_blocks: AnalyticsQuotaBlock[];
 };
 
+export type AnalyticsDashboardFilters = {
+  days?: number;
+  mode?: 'all' | 'text' | 'voice';
+  channel?: string;
+  audience?: 'all' | 'identified' | 'anonymous';
+};
+
 export type AnalyticsLivePayload = {
   active_sessions: number;
   active_voice_sessions: number;
   active_text_sessions: number;
+  active_users: number;
+  active_anonymous_users: number;
+  active_identified_users: number;
   peak_concurrent_sessions_today: number;
+  window_minutes?: number;
+  sessions?: AnalyticsLiveSession[];
+  messages?: AnalyticsLiveMessage[];
+};
+
+export type AnalyticsLiveSession = {
+  session_id: string;
+  user_id?: string | null;
+  channel: string;
+  mode: string;
+  status: string;
+  session_state: string;
+  started_at: string;
+  ended_at?: string | null;
+  updated_at?: string | null;
+  last_activity_at?: string | null;
+  message_count: number;
+  response_count: number;
+  fallback_count: number;
+  error_count: number;
+  is_anonymous: boolean;
+};
+
+export type AnalyticsLiveMessage = {
+  id: number;
+  session_id?: string | null;
+  role: string;
+  content: string;
+  created_at: string;
+  channel: string;
+  mode: string;
+  user_id?: string | null;
+  is_anonymous: boolean;
 };
 
 export type AnalyticsUserSessionItem = {
@@ -130,6 +173,7 @@ export type AnalyticsSessionMessage = {
   is_flagged?: boolean;
   flag_reason?: string | null;
   created_at: string;
+  metadata?: Record<string, unknown>;
 };
 
 export type AnalyticsSessionIssue = {
@@ -143,6 +187,14 @@ export type AnalyticsSessionIssue = {
   metadata: Record<string, unknown>;
 };
 
+export type AnalyticsSessionEvent = {
+  id: number;
+  event_type: string;
+  ts: string;
+  duration_ms?: number | null;
+  metadata: Record<string, unknown>;
+};
+
 export type AnalyticsUserSessionsPayload = {
   user_id: string;
   sessions: AnalyticsUserSessionItem[];
@@ -152,6 +204,7 @@ export type AnalyticsSessionDetailPayload = {
   session: AnalyticsUserSessionItem;
   messages: AnalyticsSessionMessage[];
   issues: AnalyticsSessionIssue[];
+  events: AnalyticsSessionEvent[];
 };
 
 export async function fetchCloneConfig() {
@@ -166,12 +219,31 @@ export async function fetchPromptConfig(mode: PromptMode) {
   return axios.get<PromptConfig>(`/api/prompt/${mode}`);
 }
 
-export async function fetchAnalyticsDashboard() {
-  return axios.get<AnalyticsDashboardPayload>('/api/analytics/dashboard');
+function analyticsFilterParams(filters: AnalyticsDashboardFilters = {}) {
+  const params = new URLSearchParams();
+  if (filters.days) {
+    params.set('days', String(Math.max(1, Math.min(90, filters.days))));
+  }
+  if (filters.mode && filters.mode !== 'all') {
+    params.set('mode', filters.mode);
+  }
+  if (filters.channel && filters.channel !== 'all') {
+    params.set('channel', filters.channel);
+  }
+  if (filters.audience && filters.audience !== 'all') {
+    params.set('audience', filters.audience);
+  }
+  return params.toString();
 }
 
-export async function fetchAnalyticsLive() {
-  return axios.get<AnalyticsLivePayload>('/api/analytics/live');
+export async function fetchAnalyticsDashboard(filters: AnalyticsDashboardFilters = {}) {
+  const query = analyticsFilterParams(filters);
+  return axios.get<AnalyticsDashboardPayload>(query ? `/api/analytics/dashboard?${query}` : '/api/analytics/dashboard');
+}
+
+export async function fetchAnalyticsLive(filters: AnalyticsDashboardFilters = {}) {
+  const query = analyticsFilterParams(filters);
+  return axios.get<AnalyticsLivePayload>(query ? `/api/analytics/live?${query}` : '/api/analytics/live');
 }
 
 export async function fetchAnalyticsHistory(days = 14) {
