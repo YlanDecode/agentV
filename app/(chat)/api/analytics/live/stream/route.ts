@@ -1,8 +1,5 @@
 import { agentVocalFetch, isAgentVocalEnabled } from '@/lib/backend/agentvocal';
 
-export const dynamic = 'force-dynamic';
-export const runtime = 'nodejs';
-
 export async function GET(request: Request) {
   if (!isAgentVocalEnabled()) {
     return Response.json(
