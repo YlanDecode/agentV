@@ -272,6 +272,45 @@ async function trackAgentVocalTextTurn({
   });
 }
 
+async function trackAgentVocalSessionPresence({
+  chatId,
+  userId,
+  userName,
+  mode = "text",
+  state = "start",
+  status = "completed",
+  metadata,
+}: {
+  chatId: string;
+  userId?: string | null;
+  userName: string;
+  mode?: "text" | "voice";
+  state?: "start" | "heartbeat" | "end";
+  status?: "active" | "completed" | "interrupted" | "blocked" | "error";
+  metadata?: Record<string, unknown>;
+}) {
+  if (!isAgentVocalEnabled() || !chatId.trim()) {
+    return;
+  }
+
+  await agentVocalFetch("/analytics/session-presence", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      session_id: chatId,
+      user_id: userId ?? undefined,
+      user_name: userName,
+      channel: "web",
+      mode,
+      state,
+      status,
+      metadata: metadata ?? {},
+    }),
+  });
+}
+
 export async function POST(request: Request) {
   let requestBody: PostRequestBody;
 
@@ -315,6 +354,25 @@ export async function POST(request: Request) {
       session?.user?.name ??
       session?.user?.id ??
       "Utilisateur";
+
+    if (message?.role === "user") {
+      try {
+        await trackAgentVocalSessionPresence({
+          chatId: id,
+          userId: session?.user?.id,
+          userName: displayName,
+          mode: "text",
+          state: "start",
+          status: "active",
+          metadata: {
+            source: "next-ai-sdk",
+            model: selectedChatModel,
+          },
+        });
+      } catch (error) {
+        console.error("Failed to mark live session start", error);
+      }
+    }
 
     if (isAnonymousMode && message?.role === "user") {
       const text = message.parts
