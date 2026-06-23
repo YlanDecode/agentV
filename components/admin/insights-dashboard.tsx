@@ -22,6 +22,8 @@ type LoadState = {
   data: AnalyticsDashboardPayload | null;
 };
 
+const LIVE_POLL_INTERVAL_MS = 3000;
+
 type LiveModeFilter = "all" | "text" | "voice";
 type LiveAudienceFilter = "all" | "identified" | "anonymous";
 
@@ -138,7 +140,7 @@ export function InsightsDashboard() {
   useEffect(() => {
     let cancelled = false;
     let highlightTimeout: number | null = null;
-    let liveFallbackInterval: number | null = null;
+    let livePollingInterval: number | null = null;
     let liveEventSource: EventSource | null = null;
     const filters: AnalyticsDashboardFilters = {
       days: daysFilter,
@@ -223,27 +225,26 @@ export function InsightsDashboard() {
       }
     };
 
-    const stopFallbackPolling = () => {
-      if (liveFallbackInterval) {
-        window.clearInterval(liveFallbackInterval);
-        liveFallbackInterval = null;
+    const stopLivePolling = () => {
+      if (livePollingInterval) {
+        window.clearInterval(livePollingInterval);
+        livePollingInterval = null;
       }
     };
 
-    const startFallbackPolling = () => {
-      if (liveFallbackInterval) {
+    const startLivePolling = () => {
+      if (livePollingInterval) {
         return;
       }
-      liveFallbackInterval = window.setInterval(() => {
+      livePollingInterval = window.setInterval(() => {
         void loadLive();
-      }, 5000);
+      }, LIVE_POLL_INTERVAL_MS);
     };
 
     const startLiveStream = () => {
       const query = buildAnalyticsQuery(filters);
       liveEventSource = new EventSource(query ? `/api/analytics/live/stream?${query}` : "/api/analytics/live/stream");
       liveEventSource.addEventListener("live", (event) => {
-        stopFallbackPolling();
         try {
           const live = JSON.parse((event as MessageEvent).data) as AnalyticsLivePayload;
           if (!cancelled) {
@@ -258,11 +259,13 @@ export function InsightsDashboard() {
           liveEventSource.close();
           liveEventSource = null;
         }
-        startFallbackPolling();
+        startLivePolling();
       };
     };
 
     void loadDashboard();
+    void loadLive();
+    startLivePolling();
     startLiveStream();
     const dashboardInterval = window.setInterval(() => {
       void loadDashboard();
@@ -271,7 +274,7 @@ export function InsightsDashboard() {
     return () => {
       cancelled = true;
       window.clearInterval(dashboardInterval);
-      stopFallbackPolling();
+      stopLivePolling();
       if (liveEventSource) {
         liveEventSource.close();
       }
