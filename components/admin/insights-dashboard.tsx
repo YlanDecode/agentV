@@ -114,6 +114,20 @@ function quotaReasonLabel(reason: string) {
   }
 }
 
+function formatActorLabel(userId: string) {
+  const value = userId.trim();
+  if (!value) {
+    return "Utilisateur inconnu";
+  }
+  if (value.startsWith("session:")) {
+    return `Anonyme · ${value.slice(8, 20)}`;
+  }
+  if (value.startsWith("anon:")) {
+    return `Anonyme · ${value.slice(5, 17)}`;
+  }
+  return value;
+}
+
 function buildAnalyticsQuery(filters: AnalyticsDashboardFilters) {
   const params = new URLSearchParams();
   params.set("days", String(filters.days ?? 14));
@@ -490,6 +504,7 @@ export function InsightsDashboard() {
             items={topDocuments.slice(0, 6).map((item) => ({
               title: String(item.document_title ?? "Document"),
               description: `${metric(item.usage_count)} usage(s)`,
+              href: Number(item.document_id ?? 0) > 0 ? `/admin/analytics/documents/${encodeURIComponent(String(item.document_id))}` : "/admin/rag",
             }))}
           />
         </Panel>
@@ -500,7 +515,7 @@ export function InsightsDashboard() {
             items={topUsers.slice(0, 6).map((item) => {
               const userId = String(item.user_id ?? "").trim();
               return {
-                title: userId || "Utilisateur inconnu",
+                title: formatActorLabel(userId),
                 description: `${metric(item.responses_count)} reponses · ${metric(item.total_sessions)} sessions · ${metric(item.blocked_count)} blocage(s)`,
                 href: userId ? `/admin/analytics/user-sessions?user_id=${encodeURIComponent(userId)}` : undefined,
               };

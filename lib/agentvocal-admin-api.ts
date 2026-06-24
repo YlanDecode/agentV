@@ -207,6 +207,22 @@ export type AnalyticsSessionDetailPayload = {
   events: AnalyticsSessionEvent[];
 };
 
+export type AnalyticsDocumentUsageItem = {
+  session_id?: string | null;
+  message_id?: string | null;
+  query?: string | null;
+  score?: number | null;
+  created_at: string;
+  chunk_index?: number | null;
+  excerpt: string;
+  used_in_final_answer: boolean;
+};
+
+export type AnalyticsDocumentUsagePayload = {
+  document: RagDocument;
+  usages: AnalyticsDocumentUsageItem[];
+};
+
 export async function fetchCloneConfig() {
   return axios.get<POCConfigPayload>('/api/settings/clone');
 }
@@ -260,6 +276,10 @@ export async function fetchAnalyticsUserSessions(userId: string, limit = 20) {
 
 export async function fetchAnalyticsSessionDetail(sessionId: string) {
   return axios.get<AnalyticsSessionDetailPayload>(`/api/analytics/sessions/${encodeURIComponent(sessionId)}`);
+}
+
+export async function fetchAnalyticsDocumentUsage(documentId: number, limit = 50) {
+  return axios.get<AnalyticsDocumentUsagePayload>(`/api/analytics/documents/${documentId}/usage?limit=${Math.max(1, Math.min(200, limit))}`);
 }
 
 export async function fetchAnalyticsUserUsage(userId: string, days = 14) {
