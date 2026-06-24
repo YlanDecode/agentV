@@ -1,11 +1,10 @@
-import { redirect } from "next/navigation";
+import { Suspense } from "react";
+import { SessionLegacyRedirect } from "@/components/admin/session-legacy-redirect";
 
-type SessionDetailPageProps = {
-  params: Promise<{ sessionId: string }>;
-};
-
-export default async function SessionDetailPage({ params }: SessionDetailPageProps) {
-  const resolvedParams = await params;
-  const sessionId = decodeURIComponent((resolvedParams.sessionId || "").trim());
-  redirect(`/admin/analytics/user-sessions?user_id=${encodeURIComponent(`session:${sessionId}`)}&session_id=${encodeURIComponent(sessionId)}`);
+export default function SessionDetailPage() {
+  return (
+    <Suspense fallback={<div className="h-28 animate-pulse rounded-3xl bg-card/60" />}>
+      <SessionLegacyRedirect />
+    </Suspense>
+  );
 }
