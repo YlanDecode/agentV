@@ -7,6 +7,7 @@ import { UserSessionsDashboard } from "@/components/admin/user-sessions-dashboar
 export function UserSessionsPageContent() {
   const searchParams = useSearchParams();
   const userId = searchParams.get("user_id")?.trim() ?? "";
+  const sessionId = searchParams.get("session_id")?.trim() ?? "";
 
   if (!userId) {
     return (
@@ -20,5 +21,5 @@ export function UserSessionsPageContent() {
     );
   }
 
-  return <UserSessionsDashboard userId={userId} />;
+  return <UserSessionsDashboard userId={userId} focusSessionId={sessionId} />;
 }

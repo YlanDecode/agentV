@@ -76,7 +76,7 @@ function quotaReasonLabel(reason: string) {
   }
 }
 
-export function UserSessionsDashboard({ userId }: { userId: string }) {
+export function UserSessionsDashboard({ userId, focusSessionId = "" }: { userId: string; focusSessionId?: string }) {
   const [state, setState] = useState<LoadState>({
     loading: true,
     error: "",
@@ -102,6 +102,17 @@ export function UserSessionsDashboard({ userId }: { userId: string }) {
 
     void load();
   }, [userId]);
+
+  useEffect(() => {
+    if (!focusSessionId) {
+      return;
+    }
+    setExpandedSessions((prev) => {
+      const next = new Set(prev);
+      next.add(focusSessionId);
+      return next;
+    });
+  }, [focusSessionId]);
 
   const toggleSession = (sessionId: string) => {
     setExpandedSessions((prev) => {
@@ -143,7 +154,17 @@ export function UserSessionsDashboard({ userId }: { userId: string }) {
     );
   }
 
-  const sessions = state.sessions;
+  const sessions = [...state.sessions].sort((left, right) => {
+    if (focusSessionId) {
+      if (left.session_id === focusSessionId) {
+        return -1;
+      }
+      if (right.session_id === focusSessionId) {
+        return 1;
+      }
+    }
+    return String(right.started_at || "").localeCompare(String(left.started_at || ""));
+  });
   const usage = state.usage;
   const quota = usage?.quota;
   const totals = usage?.totals;
@@ -160,6 +181,14 @@ export function UserSessionsDashboard({ userId }: { userId: string }) {
       <section className="rounded-3xl border border-border/70 bg-background/80 p-5 md:p-6">
         <h2 className="text-lg font-semibold text-foreground">Indicateurs utilisateur</h2>
         <p className="mt-1 text-sm text-muted-foreground">Utilisateur : {userId}</p>
+
+        {focusSessionId ? (
+          <div className="mt-4 rounded-2xl border border-sky-500/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-300">Session ciblee</p>
+            <p className="mt-1 break-all">{focusSessionId}</p>
+            <p className="mt-1 text-xs text-sky-200/80">Cette page est l&apos;interface unique pour voir les echanges et le debug de session.</p>
+          </div>
+        ) : null}
 
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <SmallStat icon={MessageCircleIcon} label="Sessions" value={metric(totals?.total_sessions ?? sessions.length)} />
@@ -241,10 +270,11 @@ export function UserSessionsDashboard({ userId }: { userId: string }) {
           <div className="space-y-3">
             {sessions.map((session) => {
               const isExpanded = expandedSessions.has(session.session_id);
+              const isFocused = focusSessionId === session.session_id;
               const transcript = transcripts[session.session_id];
               return (
                 <div
-                  className="rounded-3xl border border-border bg-background/80 transition-colors"
+                  className={`rounded-3xl border bg-background/80 transition-colors ${isFocused ? "border-sky-400/60 shadow-[0_0_0_1px_rgba(56,189,248,0.18)]" : "border-border"}`}
                   key={session.session_id}
                 >
                   <button
@@ -260,6 +290,11 @@ export function UserSessionsDashboard({ userId }: { userId: string }) {
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
+                        {isFocused ? (
+                          <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-300">
+                            ouverte ici
+                          </span>
+                        ) : null}
                         <span className="rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-muted-foreground">
                           {session.status}
                         </span>
@@ -297,14 +332,7 @@ export function UserSessionsDashboard({ userId }: { userId: string }) {
                   {isExpanded ? (
                     <div className="border-t border-border/70 px-4 pb-4 pt-3">
                       <div className="mb-3 flex items-center justify-between gap-3">
-                        <p className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Echanges</p>
-                        <Link
-                          className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground hover:bg-foreground hover:text-background"
-                          href={`/admin/analytics/sessions/${encodeURIComponent(session.session_id)}`}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          Voir detail complet
-                        </Link>
+                        <p className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Mini debug conversationnel</p>
                       </div>
 
                       {transcript?.loading ? (

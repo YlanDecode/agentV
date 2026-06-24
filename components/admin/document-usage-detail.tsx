@@ -6,6 +6,10 @@ import { useEffect, useState } from "react";
 import { fetchAnalyticsDocumentUsage, type AnalyticsDocumentUsagePayload } from "@/lib/agentvocal-admin-api";
 import { getApiErrorMessage } from "@/lib/axios";
 
+function buildSessionInspectorHref(sessionId: string) {
+  return `/admin/analytics/user-sessions?user_id=${encodeURIComponent(`session:${sessionId}`)}&session_id=${encodeURIComponent(sessionId)}`;
+}
+
 type LoadState = {
   loading: boolean;
   error: string;
@@ -91,7 +95,7 @@ export function DocumentUsageDetail({ documentId }: { documentId: number }) {
                   <p className="mt-1 text-xs text-muted-foreground">{formatDate(usage.created_at)}{usage.chunk_index !== null && usage.chunk_index !== undefined ? ` · chunk ${usage.chunk_index + 1}` : ""}</p>
                 </div>
                 {usage.session_id ? (
-                  <Link className="inline-flex items-center gap-2 text-xs font-medium text-foreground underline underline-offset-2" href={`/admin/analytics/sessions/${encodeURIComponent(usage.session_id)}`}>
+                  <Link className="inline-flex items-center gap-2 text-xs font-medium text-foreground underline underline-offset-2" href={buildSessionInspectorHref(usage.session_id)}>
                     Voir la session
                     <ArrowRightIcon className="size-3.5" />
                   </Link>

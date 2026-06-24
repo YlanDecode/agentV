@@ -128,6 +128,10 @@ function formatActorLabel(userId: string) {
   return value;
 }
 
+function buildSessionInspectorHref(sessionId: string) {
+  return `/admin/analytics/user-sessions?user_id=${encodeURIComponent(`session:${sessionId}`)}&session_id=${encodeURIComponent(sessionId)}`;
+}
+
 function buildAnalyticsQuery(filters: AnalyticsDashboardFilters) {
   const params = new URLSearchParams();
   params.set("days", String(filters.days ?? 14));
@@ -545,7 +549,7 @@ export function InsightsDashboard() {
             return {
               title: `${sessionId || "session"} · ${String(item.mode ?? "text")}`,
               description: `${metric(item.fallback_count)} fallback · ${metric(item.error_count)} erreur(s) · ${String(item.review_reason ?? "A analyser")}`,
-              href: sessionId ? `/admin/analytics/sessions/${encodeURIComponent(sessionId)}` : undefined,
+              href: sessionId ? buildSessionInspectorHref(sessionId) : undefined,
             };
           })}
         />
@@ -686,7 +690,7 @@ function LiveSessionsList({ items, highlightedIds }: { items: AnalyticsLiveSessi
               <span>Debut: {formatDate(item.started_at)}</span>
               <span>Maj: {formatDate(item.last_activity_at)}</span>
             </div>
-            <Link className="mt-3 inline-flex text-xs font-medium text-foreground underline underline-offset-2" href={`/admin/analytics/sessions/${encodeURIComponent(item.session_id)}`}>
+            <Link className="mt-3 inline-flex text-xs font-medium text-foreground underline underline-offset-2" href={buildSessionInspectorHref(item.session_id)}>
               Ouvrir la session
             </Link>
           </div>
