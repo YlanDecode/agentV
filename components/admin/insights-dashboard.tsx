@@ -639,7 +639,7 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
 
 function LiveSessionsList({ items, highlightedIds }: { items: AnalyticsLiveSession[]; highlightedIds: string[] }) {
   if (items.length === 0) {
-    return <p className="text-sm text-muted-foreground">Aucune session ne correspond aux filtres en ce moment.</p>;
+    return <p className="text-sm text-muted-foreground">Aucune session dans la fenêtre live des 5 dernières minutes pour les filtres actuels.</p>;
   }
 
   return (
@@ -683,7 +683,7 @@ function LiveSessionsList({ items, highlightedIds }: { items: AnalyticsLiveSessi
 
 function LiveMessagesList({ items, highlightedIds }: { items: AnalyticsLiveMessage[]; highlightedIds: string[] }) {
   if (items.length === 0) {
-    return <p className="text-sm text-muted-foreground">Aucun message recent ne correspond aux filtres.</p>;
+    return <p className="text-sm text-muted-foreground">Aucun message récent dans la fenêtre live des 5 dernières minutes pour les filtres actuels.</p>;
   }
 
   return (
