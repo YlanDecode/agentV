@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BanIcon, BotIcon, Clock3Icon, FilterIcon, MessageSquareIcon, RadioTowerIcon, UserRoundIcon, WavesIcon } from "lucide-react";
+import { AlertTriangleIcon, BanIcon, BotIcon, Clock3Icon, FilterIcon, MessageSquareIcon, RadioTowerIcon, UserRoundIcon, WavesIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
   fetchAnalyticsDashboard,
@@ -40,6 +40,10 @@ function metric(value: unknown) {
 function toNumber(value: unknown) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sumHistory(data: AnalyticsHistoryPoint[], selector: (item: AnalyticsHistoryPoint) => number) {
+  return data.reduce((total, item) => total + selector(item), 0);
 }
 
 function formatDuration(seconds: number) {
@@ -315,6 +319,13 @@ export function InsightsDashboard() {
   const live = (state.data?.live ?? {}) as AnalyticsLivePayload;
   const liveSessions = Array.isArray(live.sessions) ? live.sessions : [];
   const liveMessages = Array.isArray(live.messages) ? live.messages : [];
+  const periodSessions = toNumber(summary.sessions_today);
+  const periodMessages = toNumber(summary.messages_today ?? sumHistory(history, (item) => item.messages));
+  const periodResponses = toNumber(summary.responses_today ?? sumHistory(history, (item) => item.responses));
+  const periodErrors = toNumber(summary.errors_today ?? sumHistory(history, (item) => item.error_count));
+  const periodFallbacks = toNumber(summary.fallbacks_today ?? sumHistory(history, (item) => item.fallback_count));
+  const periodIncidents = toNumber(summary.incidents_today ?? sumHistory(history, (item) => item.error_count + item.fallback_count + item.blocked_count));
+  const periodVoiceSeconds = toNumber(summary.voice_seconds_today ?? sumHistory(history, (item) => item.voice_seconds));
   const channelOptions = Array.from(new Set([...(channelFilter !== "all" ? [channelFilter] : []), ...liveSessions.map((item) => String(item.channel || "web"))]));
   const filteredSessions = liveSessions.filter((item) => {
     if (modeFilter !== "all" && item.mode !== modeFilter) {
@@ -358,8 +369,6 @@ export function InsightsDashboard() {
     }
     return true;
   });
-  const today = history.at(-1);
-
   return (
     <div className="space-y-6">
       <Panel title="Perimetre" subtitle="La periode et les filtres recalculent les KPI, les listes et le graphique cote serveur.">
@@ -373,16 +382,17 @@ export function InsightsDashboard() {
       </Panel>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard icon={BotIcon} label="Conversations sur la periode" value={metric(summary.sessions_today)} helper={`${metric(daysFilter)} jour(s) analyses`} />
-        <MetricCard icon={RadioTowerIcon} label="Sessions visibles maintenant" value={metric(summary.active_sessions)} helper={`Fenetre glissante ${metric(live.window_minutes ?? 5)} min`} />
+        <MetricCard icon={BotIcon} label="Conversations sur la periode" value={metric(periodSessions)} helper={`${metric(daysFilter)} jour(s) analyses`} />
+        <MetricCard icon={MessageSquareIcon} label="Messages sur la periode" value={metric(periodMessages)} helper="Echanges utilisateur detectes" />
+        <MetricCard icon={BotIcon} label="Reponses sur la periode" value={metric(periodResponses)} helper="Reponses produites par l'agent" />
         <MetricCard icon={Clock3Icon} label="Temps total d'usage" value={formatDuration(toNumber(summary.total_duration_seconds))} helper={`Cumule sur ${metric(daysFilter)} jour(s)`} />
-        <MetricCard icon={BanIcon} label="Blocages quota periode" value={metric(quota.blocks_today)} helper={quotaReasonLabel(String(quota.most_common_reason || ""))} />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard icon={RadioTowerIcon} label="Sessions visibles maintenant" value={metric(summary.active_sessions)} helper={`Fenetre glissante ${metric(live.window_minutes ?? 5)} min`} />
         <MetricCard icon={UserRoundIcon} label="Utilisateurs actifs" value={metric(summary.active_users)} helper={`${metric(summary.active_identified_users)} identifies · ${metric(summary.active_anonymous_users)} anonymes`} />
-        <MetricCard icon={WavesIcon} label="Sessions vocales live" value={metric(summary.active_voice_sessions)} helper="Websocket et activite recente" />
-        <MetricCard icon={MessageSquareIcon} label="Sessions texte live" value={metric(summary.active_text_sessions)} helper="Derniers messages detectes" />
+        <MetricCard icon={AlertTriangleIcon} label="Incidents sur la periode" value={metric(periodIncidents)} helper={`${metric(periodErrors)} erreurs · ${metric(periodFallbacks)} fallback`} />
+        <MetricCard icon={BanIcon} label="Blocages quota periode" value={metric(quota.blocks_today)} helper={quotaReasonLabel(String(quota.most_common_reason || ""))} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
@@ -398,6 +408,8 @@ export function InsightsDashboard() {
             <InfoRow label="Identifies actifs" value={metric(summary.active_identified_users)} />
             <InfoRow label="Sessions voix actives" value={metric(summary.active_voice_sessions)} />
             <InfoRow label="Sessions texte actives" value={metric(summary.active_text_sessions)} />
+            <InfoRow label="Messages sur la periode" value={metric(periodMessages)} />
+            <InfoRow label="Reponses sur la periode" value={metric(periodResponses)} />
             <InfoRow label="Pic simultane du jour" value={metric(summary.peak_concurrent_sessions_today)} />
             <InfoRow label="Sessions a revoir" value={metric(summary.sessions_needing_review)} />
             <InfoRow label="Fallback du jour" value={`${Math.round(toNumber(summary.fallback_rate) * 100)} %`} />
@@ -496,13 +508,16 @@ export function InsightsDashboard() {
           />
         </Panel>
 
-        <Panel title="Resume de la periode" subtitle="Version simple pour une lecture non technique.">
+        <Panel title="Qualite et echanges" subtitle="Les indicateurs cles de charge, echanges et erreurs sur la periode selectionnee.">
           <div className="space-y-3 text-sm text-muted-foreground">
-            <InfoRow label="Messages traites" value={metric(today?.messages ?? summary.responses_today)} />
-            <InfoRow label="Reponses produites" value={metric(today?.responses ?? summary.responses_today)} />
-            <InfoRow label="Temps vocal consomme" value={`${metric(today?.voice_seconds ?? 0)} s`} />
-            <InfoRow label="Sessions problematiques" value={metric(today?.sessions_needing_review ?? summary.sessions_needing_review)} />
-            <InfoRow label="Refus automatiques" value={metric(today?.blocked_count ?? quota.blocks_today)} />
+            <InfoRow label="Messages traites" value={metric(periodMessages)} />
+            <InfoRow label="Reponses produites" value={metric(periodResponses)} />
+            <InfoRow label="Erreurs" value={metric(periodErrors)} />
+            <InfoRow label="Fallback" value={metric(periodFallbacks)} />
+            <InfoRow label="Incidents totaux" value={metric(periodIncidents)} />
+            <InfoRow label="Temps vocal consomme" value={`${metric(periodVoiceSeconds)} s`} />
+            <InfoRow label="Sessions problematiques" value={metric(summary.sessions_needing_review)} />
+            <InfoRow label="Refus automatiques" value={metric(quota.blocks_today)} />
           </div>
         </Panel>
       </div>
@@ -732,10 +747,11 @@ function UsageChart({ data }: { data: AnalyticsHistoryPoint[] }) {
   const padding = 20;
   const maxValue = Math.max(1, ...data.flatMap((item) => [item.responses, item.sessions, item.blocked_count + item.error_count + item.fallback_count]));
   const stepX = data.length > 1 ? (width - padding * 2) / (data.length - 1) : 0;
+  const xAt = (index: number) => (data.length > 1 ? padding + stepX * index : width / 2);
   const scaleY = (value: number) => height - padding - (value / maxValue) * (height - padding * 2);
   const line = (selector: (item: AnalyticsHistoryPoint) => number) =>
     data
-      .map((item, index) => `${padding + stepX * index},${scaleY(selector(item))}`)
+      .map((item, index) => `${xAt(index)},${scaleY(selector(item))}`)
       .join(" ");
 
   return (
@@ -746,9 +762,16 @@ function UsageChart({ data }: { data: AnalyticsHistoryPoint[] }) {
             const y = padding + ((height - padding * 2) / 3) * row;
             return <line key={row} x1={padding} x2={width - padding} y1={y} y2={y} stroke="currentColor" strokeDasharray="4 6" className="text-border/80" />;
           })}
-          <polyline fill="none" points={line((item) => item.responses)} stroke="currentColor" strokeWidth="3" className="text-foreground" />
-          <polyline fill="none" points={line((item) => item.sessions)} stroke="currentColor" strokeWidth="2" className="text-sky-500" />
-          <polyline fill="none" points={line((item) => item.blocked_count + item.error_count + item.fallback_count)} stroke="currentColor" strokeWidth="2" className="text-amber-500" />
+          {data.length > 1 ? <polyline fill="none" points={line((item) => item.responses)} stroke="currentColor" strokeWidth="3" className="text-foreground" /> : null}
+          {data.length > 1 ? <polyline fill="none" points={line((item) => item.sessions)} stroke="currentColor" strokeWidth="2" className="text-sky-500" /> : null}
+          {data.length > 1 ? <polyline fill="none" points={line((item) => item.blocked_count + item.error_count + item.fallback_count)} stroke="currentColor" strokeWidth="2" className="text-amber-500" /> : null}
+          {data.map((item, index) => (
+            <g key={item.bucket}>
+              <circle cx={xAt(index)} cy={scaleY(item.responses)} fill="currentColor" r="5" className="text-foreground" />
+              <circle cx={xAt(index)} cy={scaleY(item.sessions)} fill="currentColor" r="4" className="text-sky-500" />
+              <circle cx={xAt(index)} cy={scaleY(item.blocked_count + item.error_count + item.fallback_count)} fill="currentColor" r="4" className="text-amber-500" />
+            </g>
+          ))}
         </svg>
       </div>
 
