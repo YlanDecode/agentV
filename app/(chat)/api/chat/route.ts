@@ -311,6 +311,32 @@ async function trackAgentVocalSessionPresence({
   });
 }
 
+async function closeAgentVocalSessionPresence({
+  chatId,
+  userId,
+  userName,
+  mode = "text",
+  status = "completed",
+  metadata,
+}: {
+  chatId: string;
+  userId?: string | null;
+  userName: string;
+  mode?: "text" | "voice";
+  status?: "active" | "completed" | "interrupted" | "blocked" | "error";
+  metadata?: Record<string, unknown>;
+}) {
+  await trackAgentVocalSessionPresence({
+    chatId,
+    userId,
+    userName,
+    mode,
+    state: "end",
+    status,
+    metadata,
+  });
+}
+
 export async function POST(request: Request) {
   let requestBody: PostRequestBody;
 
@@ -428,6 +454,11 @@ export async function POST(request: Request) {
             generateId: generateUUID,
             onFinish: async () => {
               if (!assistantText) {
+                await closeAgentVocalSessionPresence({
+                  chatId: id,
+                  userName: displayName,
+                  mode: "text",
+                });
                 return;
               }
 
@@ -451,9 +482,27 @@ export async function POST(request: Request) {
                 });
               } catch (error) {
                 console.error("Failed to save anonymous conversation", error);
+              } finally {
+                await closeAgentVocalSessionPresence({
+                  chatId: id,
+                  userName: displayName,
+                  mode: "text",
+                  metadata: {
+                    source: "agentvocal-anonymous",
+                    model: "agentvocal",
+                  },
+                });
               }
             },
-            onError: () => "Oops, an error occurred!",
+            onError: () => {
+              void closeAgentVocalSessionPresence({
+                chatId: id,
+                userName: displayName,
+                mode: "text",
+                status: "error",
+              });
+              return "Oops, an error occurred!";
+            },
           });
 
           return createUIMessageStreamResponse({ stream });
@@ -503,6 +552,11 @@ export async function POST(request: Request) {
           generateId: generateUUID,
           onFinish: async () => {
             if (!assistantText) {
+              await closeAgentVocalSessionPresence({
+                chatId: id,
+                userName: displayName,
+                mode: "text",
+              });
               return;
             }
 
@@ -516,9 +570,23 @@ export async function POST(request: Request) {
               });
             } catch (error) {
               console.error("Failed to save anonymous conversation", error);
+            } finally {
+              await closeAgentVocalSessionPresence({
+                chatId: id,
+                userName: displayName,
+                mode: "text",
+              });
             }
           },
-          onError: () => "Oops, an error occurred!",
+          onError: () => {
+            void closeAgentVocalSessionPresence({
+              chatId: id,
+              userName: displayName,
+              mode: "text",
+              status: "error",
+            });
+            return "Oops, an error occurred!";
+          },
         });
 
         return createUIMessageStreamResponse({ stream });
@@ -566,6 +634,12 @@ export async function POST(request: Request) {
           generateId: generateUUID,
           onFinish: async () => {
             if (!assistantText) {
+              await closeAgentVocalSessionPresence({
+                chatId: id,
+                userId: trackedUserId,
+                userName: displayName,
+                mode: "text",
+              });
               return;
             }
 
@@ -590,9 +664,29 @@ export async function POST(request: Request) {
               });
             } catch (error) {
               console.error("Failed to save anonymous conversation", error);
+            } finally {
+              await closeAgentVocalSessionPresence({
+                chatId: id,
+                userId: trackedUserId,
+                userName: displayName,
+                mode: "text",
+                metadata: {
+                  source: "agentvocal-authenticated",
+                  model: "agentvocal",
+                },
+              });
             }
           },
-          onError: () => "Oops, an error occurred!",
+          onError: () => {
+            void closeAgentVocalSessionPresence({
+              chatId: id,
+              userId: trackedUserId,
+              userName: displayName,
+              mode: "text",
+              status: "error",
+            });
+            return "Oops, an error occurred!";
+          },
         });
 
         return createUIMessageStreamResponse({ stream });
@@ -640,6 +734,11 @@ export async function POST(request: Request) {
         generateId: generateUUID,
         onFinish: async () => {
           if (!assistantText) {
+            await closeAgentVocalSessionPresence({
+              chatId: id,
+              userName: displayName,
+              mode: "text",
+            });
             return;
           }
 
@@ -653,9 +752,23 @@ export async function POST(request: Request) {
             });
           } catch (error) {
             console.error("Failed to save anonymous conversation", error);
+          } finally {
+            await closeAgentVocalSessionPresence({
+              chatId: id,
+              userName: displayName,
+              mode: "text",
+            });
           }
         },
-        onError: () => "Oops, an error occurred!",
+        onError: () => {
+          void closeAgentVocalSessionPresence({
+            chatId: id,
+            userName: displayName,
+            mode: "text",
+            status: "error",
+          });
+          return "Oops, an error occurred!";
+        },
       });
 
       return createUIMessageStreamResponse({ stream });
@@ -803,6 +916,12 @@ export async function POST(request: Request) {
           generateId: generateUUID,
           onFinish: async () => {
             if (!assistantText) {
+              await closeAgentVocalSessionPresence({
+                chatId: id,
+                userId: session.user.id,
+                userName: displayName,
+                mode: "text",
+              });
               return;
             }
 
@@ -818,8 +937,23 @@ export async function POST(request: Request) {
                 },
               ],
             });
+            await closeAgentVocalSessionPresence({
+              chatId: id,
+              userId: session.user.id,
+              userName: displayName,
+              mode: "text",
+            });
           },
-          onError: () => "Oops, an error occurred!",
+          onError: () => {
+            void closeAgentVocalSessionPresence({
+              chatId: id,
+              userId: session.user.id,
+              userName: displayName,
+              mode: "text",
+              status: "error",
+            });
+            return "Oops, an error occurred!";
+          },
         });
 
         return createUIMessageStreamResponse({ stream });
@@ -867,6 +1001,12 @@ export async function POST(request: Request) {
         generateId: generateUUID,
         onFinish: async () => {
           if (!assistantText) {
+            await closeAgentVocalSessionPresence({
+              chatId: id,
+              userId: session.user.id,
+              userName: displayName,
+              mode: "text",
+            });
             return;
           }
 
@@ -882,8 +1022,23 @@ export async function POST(request: Request) {
               },
             ],
           });
+          await closeAgentVocalSessionPresence({
+            chatId: id,
+            userId: session.user.id,
+            userName: displayName,
+            mode: "text",
+          });
         },
-        onError: () => "Oops, an error occurred!",
+        onError: () => {
+          void closeAgentVocalSessionPresence({
+            chatId: id,
+            userId: session.user.id,
+            userName: displayName,
+            mode: "text",
+            status: "error",
+          });
+          return "Oops, an error occurred!";
+        },
       });
 
       return createUIMessageStreamResponse({ stream });
@@ -1165,11 +1320,39 @@ export async function POST(request: Request) {
               });
             } catch (error) {
               console.error("Failed to track standard chat turn", error);
+            } finally {
+              await closeAgentVocalSessionPresence({
+                chatId: id,
+                userId: session.user.id,
+                userName: displayName,
+                mode: "text",
+                metadata: {
+                  source: "next-ai-sdk",
+                  model: chatModel,
+                  tool_approval_flow: isToolApprovalFlow,
+                },
+              });
             }
+          } else {
+            await closeAgentVocalSessionPresence({
+              chatId: id,
+              userId: session.user.id,
+              userName: displayName,
+              mode: "text",
+            });
           }
         }
       },
       onError: (error) => {
+        if (message?.role === "user") {
+          void closeAgentVocalSessionPresence({
+            chatId: id,
+            userId: session?.user?.id,
+            userName: displayName,
+            mode: "text",
+            status: "error",
+          });
+        }
         if (
           error instanceof Error &&
           error.message?.includes(
