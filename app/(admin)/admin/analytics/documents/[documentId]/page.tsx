@@ -1,15 +1,9 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { ArrowLeftIcon, BookOpenIcon } from "lucide-react";
-import { DocumentUsageDetail } from "@/components/admin/document-usage-detail";
+import { DocumentUsagePageContent } from "@/components/admin/document-usage-page-content";
 
-type DocumentDetailPageProps = {
-  params: Promise<{ documentId: string }> | { documentId: string };
-};
-
-export default async function DocumentDetailPage({ params }: DocumentDetailPageProps) {
-  const resolvedParams = await params;
-  const documentId = Number.parseInt((resolvedParams.documentId || "").trim(), 10);
-
+export default function DocumentDetailPage() {
   return (
     <div className="space-y-8">
       <section className="rounded-3xl border border-border/70 bg-card/70 p-6 shadow-sm md:p-8">
@@ -36,7 +30,9 @@ export default async function DocumentDetailPage({ params }: DocumentDetailPageP
       </section>
 
       <section className="rounded-3xl border border-border/70 bg-background/80 p-4 md:p-6">
-        <DocumentUsageDetail documentId={documentId} />
+        <Suspense fallback={<div className="h-40 animate-pulse rounded-3xl bg-card/60" />}>
+          <DocumentUsagePageContent />
+        </Suspense>
       </section>
     </div>
   );
